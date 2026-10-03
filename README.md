@@ -8,7 +8,7 @@ of the bar.
 ## Install
 
 ```bash
-omarchy plugin add <git-url> --enable
+omarchy plugin add https://github.com/motorstreak/omarchy-dock.git --enable
 ```
 
 Update with `omarchy plugin update dock`; if an update changes `Service.qml`,
