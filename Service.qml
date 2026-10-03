@@ -161,7 +161,11 @@ Item {
       exclusiveZone: modelData.size
       color: "transparent"
       WlrLayershell.namespace: "omarchy-dock-strip"
-      WlrLayershell.layer: WlrLayer.Bottom
+      // Hyprland lays out layers from the bottom one up, each in the space the
+      // ones before left over. On the overlay layer the strip comes after the
+      // bar, so the bar keeps the full width and the strip starts below it.
+      // It's invisible and takes no input, so being on top is harmless.
+      WlrLayershell.layer: WlrLayer.Overlay
       WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
       mask: Region {}
     }

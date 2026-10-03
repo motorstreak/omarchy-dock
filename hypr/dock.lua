@@ -166,6 +166,11 @@ local function gaps()
   return 0, 0, 0, 0
 end
 
+local function border()
+  local b = hl.get_config("general:border_size")
+  return type(b) == "number" and b or 0
+end
+
 -- The monitor's size in layout pixels (rotated by 90 or 270 degrees: swapped).
 local function logical_size(m)
   local w, h = m.width / m.scale, m.height / m.scale
@@ -183,8 +188,9 @@ local function monitor_named(name)
   end
 end
 
--- Puts a pinned window in its strip: against its edge with the outer gap, from
--- below the bar to the bottom.
+-- Puts a pinned window in its strip, spaced like a tiled window: its border the
+-- outer gap away from the screen edges and the bar. (Hyprland's position and
+-- size are the window's own, inside the border.)
 local function place(window, p)
   local m = monitor_named(p.monitor)
   if m == nil then
@@ -192,18 +198,20 @@ local function place(window, p)
   end
   local mw, mh = logical_size(m)
   local top, right, bottom, left = gaps()
+  local b = border()
   local r = m.reserved or {}
-  local y = m.y + (r.top or 0) + top
-  local height = mh - (r.top or 0) - (r.bottom or 0) - top - bottom
-  local x = p.edge == "left" and (m.x + left) or (m.x + mw - right - p.width)
+  local y = m.y + (r.top or 0) + top + b
+  local height = mh - (r.top or 0) - (r.bottom or 0) - top - bottom - 2 * b
+  local x = p.edge == "left" and (m.x + left + b) or (m.x + mw - right - b - p.width)
   dispatch_for(window, hl.dsp.window.resize, { x = math.floor(p.width), y = math.floor(height) })
   dispatch_for(window, hl.dsp.window.move, { x = math.floor(x), y = math.floor(y) })
 end
 
 -- Strips -----------------------------------------------------------------------------
 
--- Service.qml draws a strip for each pinned window: its width plus the outer
--- gap, so tiled windows keep their usual gap from it. Every message carries the
+-- Service.qml draws a strip for each pinned window, ending at its border on
+-- the inner side: tiled windows then keep the outer gap from it, the same as
+-- the gap between two tiled windows with Omarchy's gaps. Every message carries the
 -- whole list, a sequence number and an id for this load (messages are separate
 -- processes and can arrive out of order; a reload numbers them afresh).
 math.randomseed(os.time() + math.floor(os.clock() * 1000000))
@@ -212,10 +220,11 @@ local seq = 0
 
 local function sync()
   local _, right, _, left = gaps()
+  local b = border()
   local strips = {}
   for _, p in pairs(pinned) do
     strips[#strips + 1] = string.format('{"monitor":"%s","edge":"%s","size":%d}',
-      p.monitor:gsub('[%c"\\]', ""), p.edge, math.floor(p.width + (p.edge == "left" and left or right)))
+      p.monitor:gsub('[%c"\\]', ""), p.edge, math.floor(p.width + 2 * b + (p.edge == "left" and left or right)))
   end
   seq = seq + 1
   hl.exec_cmd("omarchy-shell -q omarchy-dock set " .. quote(string.format('{"session":"%s","seq":%d,"strips":[%s]}',
