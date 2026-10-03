@@ -599,14 +599,17 @@ do
       style(window)
     end
   end
-  -- Placed again once the strips below arrive: a changed border or gap moves
-  -- where a pinned window goes.
-  for address in pairs(pinned) do
-    local window = current(address)
-    if window then
-      place_with_strip(window)
+  -- Placed again (a changed border or gap moves where a pinned window goes)
+  -- once Hyprland has finished reloading, which otherwise puts back the
+  -- geometry it had, and once the strips below have arrived.
+  hl.timer(guard("placing pinned windows", function()
+    for address in pairs(pinned) do
+      local window = current(address)
+      if window then
+        place_with_strip(window)
+      end
     end
-  end
+  end), { timeout = 300, type = "oneshot" })
   local f = io.open(restored_file, "r")
   local keep = {}
   if f then
@@ -663,6 +666,15 @@ end
 
 -- For scripting and tests: `hyprctl eval 'dock.toggle()'` etc.
 dock = {
+  -- Every pinned window placed again (after changing gaps, say).
+  refresh = function()
+    for address in pairs(pinned) do
+      local window = current(address)
+      if window then
+        place_with_strip(window)
+      end
+    end
+  end,
   toggle = toggle,
   move = move,
   resize = resize,
