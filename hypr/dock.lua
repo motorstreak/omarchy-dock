@@ -292,17 +292,47 @@ math.randomseed(os.time() + math.floor(os.clock() * 1000000))
 local session = string.format("%d-%d", os.time(), math.random(1, 1000000000))
 local seq = 0
 
-local function sync()
+-- The width a pinned window's strip reserves.
+local function strip_size(p)
   local _, right, _, left = gaps()
-  local b = border()
+  return math.floor(p.width + 2 * border() + (p.edge == "left" and left or right))
+end
+
+local function sync()
   local strips = {}
   for _, p in pairs(pinned) do
     strips[#strips + 1] = string.format('{"monitor":"%s","edge":"%s","size":%d}',
-      p.monitor:gsub('[%c"\\]', ""), p.edge, math.floor(p.width + 2 * b + (p.edge == "left" and left or right)))
+      p.monitor:gsub('[%c"\\]', ""), p.edge, strip_size(p))
   end
   seq = seq + 1
   hl.exec_cmd("omarchy-shell -q omarchy-dock set " .. quote(string.format('{"session":"%s","seq":%d,"strips":[%s]}',
     session, seq, table.concat(strips, ","))))
+end
+
+-- Places a pinned window once its strip's new size has reached Hyprland (the
+-- shell takes a few tens of milliseconds), so the window and the tiled windows
+-- beside it start moving in the same frame instead of one after the other.
+-- Checks every 2 ms; after about 200 ms (something else reserving space on that
+-- edge, say) it places the window anyway.
+local function place_with_strip(window)
+  local address = window.address
+  local tries = 0
+  local function check()
+    local now, p = current(address), pinned[address]
+    if now == nil or p == nil then
+      return
+    end
+    local m = monitor_named(p.monitor)
+    local r = m and m.reserved or {}
+    local reserved = p.edge == "left" and r.left or r.right
+    tries = tries + 1
+    if (reserved and math.abs(reserved - strip_size(p)) < 1) or tries > 100 then
+      place(now, p)
+    else
+      hl.timer(guard("placing the pinned window", check), { timeout = 2, type = "oneshot" })
+    end
+  end
+  check()
 end
 
 -- Pinning ----------------------------------------------------------------------------
@@ -437,21 +467,25 @@ local function move(direction)
   if p.edge == edge then
     return
   end
+  local swapped = nil
   for address, other in pairs(pinned) do
     if other.monitor == p.monitor and other.edge == edge then
       local w = current(address)
       if w then
         other.edge = p.edge
-        place(w, other)
+        swapped = w
       else
         pinned[address] = nil
       end
     end
   end
   p.edge = edge
-  place(window, p)
   save()
   sync()
+  place_with_strip(window)
+  if swapped then
+    place_with_strip(swapped)
+  end
 end
 
 -- Omarchy's swap and resize keys, which move and resize a pinned window instead
@@ -475,9 +509,9 @@ local function resize(dx)
   local mw = logical_size(m)
   local width = p.edge == "right" and (p.width - dx) or (p.width + dx)
   p.width = math.floor(math.min(math.max(width, 300), mw * 0.6))
-  place(window, p)
   save()
   sync()
+  place_with_strip(window)
 end
 
 -- Omarchy's keys a pinned window uses while it has focus: { keys, Omarchy's
