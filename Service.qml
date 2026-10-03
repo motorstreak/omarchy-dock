@@ -104,6 +104,16 @@ Item {
 
   // [{ monitor, edge, size }]
   property var strips: []
+  // The strips by "<monitor> <edge>": a strip stays the same surface while only
+  // its size changes. (New objects each message would make new surfaces, and
+  // for a moment both the old and the new strip reserved space, so tiled windows
+  // jumped on every resize step.)
+  readonly property var stripKeys: strips.map(function(s) { return s.monitor + " " + s.edge })
+  readonly property var stripSizes: {
+    var sizes = {}
+    for (var i = 0; i < strips.length; i++) sizes[strips[i].monitor + " " + strips[i].edge] = strips[i].size
+    return sizes
+  }
   property string session: ""
   property int seq: -1
 
@@ -144,21 +154,25 @@ Item {
   }
 
   Variants {
-    model: root.strips
+    // Strings: an unchanged key keeps its strip.
+    model: root.stripKeys
 
     PanelWindow {
-      required property var modelData
+      required property string modelData
+      readonly property string monitor: modelData.split(" ")[0]
+      readonly property string edge: modelData.split(" ")[1]
+      readonly property int size: root.stripSizes[modelData] || 0
 
-      screen: root.screenNamed(modelData.monitor)
+      screen: root.screenNamed(monitor)
       visible: screen !== null
       anchors {
         top: true
         bottom: true
-        left: modelData.edge === "left"
-        right: modelData.edge === "right"
+        left: edge === "left"
+        right: edge === "right"
       }
-      implicitWidth: modelData.size
-      exclusiveZone: modelData.size
+      implicitWidth: size
+      exclusiveZone: size
       color: "transparent"
       WlrLayershell.namespace: "omarchy-dock-strip"
       // Hyprland lays out layers from the bottom one up, each in the space the
