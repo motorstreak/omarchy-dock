@@ -10,6 +10,8 @@
 --                    as it was)
 --   SUPER + SHIFT + LEFT/RIGHT  (a pinned window focused) move it to that edge;
 --                    if a window is pinned there, the two swap edges
+--   SUPER + MINUS/EQUAL  (a pinned window focused) move its inner edge left /
+--                    right, as between tiled windows (ALT: a little, CTRL: a lot)
 --
 -- Any window can be pinned, sidebars from the Sidebar plugin included: pinning
 -- one moves it out of its sidebar workspace first, which makes it an ordinary
@@ -452,14 +454,45 @@ local function move(direction)
   sync()
 end
 
--- Omarchy's swap keys, which move a pinned window instead while one has focus.
--- The Sidebar plugin takes the same keys while a sidebar has focus and binds
+-- Omarchy's swap and resize keys, which move and resize a pinned window instead
+-- while one has focus. The Sidebar plugin takes the same keys while a sidebar
+-- has focus and binds
 -- Omarchy's back as it loses focus, so this acts just after it on each focus
 -- change, and leaves the keys to it when a sidebar has focus.
-local move_keys = {
-  { "SUPER + SHIFT + LEFT", "Swap window to the left", "l" },
-  { "SUPER + SHIFT + RIGHT", "Swap window to the right", "r" },
+-- SUPER + MINUS/EQUAL (ALT: small steps, CTRL: big ones) on a pinned window:
+-- its inner edge moves left/right, as the line between two tiled windows does
+-- with Omarchy's resize keys, and the tiled windows follow it.
+local function resize(dx)
+  local window = hl.get_active_window()
+  local p = window and pinned[window.address]
+  if p == nil then
+    return
+  end
+  local m = monitor_named(p.monitor)
+  if m == nil then
+    return
+  end
+  local mw = logical_size(m)
+  local width = p.edge == "right" and (p.width - dx) or (p.width + dx)
+  p.width = math.floor(math.min(math.max(width, 300), mw * 0.6))
+  place(window, p)
+  save()
+  sync()
+end
+
+-- Omarchy's keys a pinned window uses while it has focus: { keys, Omarchy's
+-- description, Omarchy's action, ours }.
+local dock_keys = {
+  { "SUPER + SHIFT + LEFT", "Swap window to the left", hl.dsp.window.swap({ direction = "l" }), function() move("l") end },
+  { "SUPER + SHIFT + RIGHT", "Swap window to the right", hl.dsp.window.swap({ direction = "r" }), function() move("r") end },
 }
+for _, step in ipairs({ { "", "", 100 }, { "ALT + ", " a little", 25 }, { "CTRL + ", " a lot", 300 } }) do
+  local mods, how, dx = step[1], step[2], step[3]
+  dock_keys[#dock_keys + 1] = { "SUPER + " .. mods .. "code:20", "Expand window left" .. how,
+    hl.dsp.window.resize({ x = -dx, y = 0, relative = true }), function() resize(-dx) end }
+  dock_keys[#dock_keys + 1] = { "SUPER + " .. mods .. "code:21", "Shrink window left" .. how,
+    hl.dsp.window.resize({ x = dx, y = 0, relative = true }), function() resize(dx) end }
+end
 local keys_taken = false
 
 local function sync_keys()
@@ -473,15 +506,12 @@ local function sync_keys()
   if not want and sidebar and sidebar.keys_taken and sidebar.keys_taken() then
     return
   end
-  for _, k in ipairs(move_keys) do
+  for _, k in ipairs(dock_keys) do
     hl.unbind(k[1])
     if want then
-      local direction = k[3]
-      o.bind(k[1], "Move pinned window", guard("moving the pinned window", function()
-        move(direction)
-      end))
+      o.bind(k[1], k[2] .. " (pinned window)", guard("the pinned window", k[4]))
     else
-      o.bind(k[1], k[2], hl.dsp.window.swap({ direction = k[3] }))
+      o.bind(k[1], k[2], k[3])
     end
   end
 end
@@ -583,6 +613,7 @@ end
 dock = {
   toggle = toggle,
   move = move,
+  resize = resize,
   release = release,
   sync = sync,
 }
