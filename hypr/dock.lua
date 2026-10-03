@@ -72,6 +72,10 @@ end
 local defaults = {
   pin = "SUPER + ALT + P", -- false leaves it unbound
   width = 0.3, -- width of a pinned window that wasn't floating, as a share of the screen
+  -- Border colour of pinned windows: a colour name from the theme's colors.toml
+  -- ("cyan", "green", "foreground", ...), a colour such as "#8cbfb8", or false
+  -- for the usual border.
+  border = "cyan",
 }
 
 local config = {}
@@ -92,7 +96,7 @@ do
       for k, v in pairs(overrides) do
         if defaults[k] == nil then
           problems[#problems + 1] = "unknown option " .. tostring(k)
-        elseif type(v) == type(defaults[k]) or (k == "pin" and v == false) then
+        elseif type(v) == type(defaults[k]) or ((k == "pin" or k == "border") and v == false) then
           config[k] = v
         else
           problems[#problems + 1] = tostring(k) .. " must be a " .. type(defaults[k])
@@ -153,6 +157,72 @@ end
 
 local function current(address)
   return hl.get_window("address:" .. address)
+end
+
+-- Borders ------------------------------------------------------------------------
+
+-- Pinned windows' border colours (focused, unfocused), or nil to leave borders be.
+local pinned_border = nil
+if config.border then
+  local hex = config.border:match("^#(%x%x%x%x%x%x)$")
+  if hex == nil then
+    local f = io.open(state_home .. "/omarchy/current/theme/colors.toml", "r")
+    if f then
+      local name = config.border:gsub("%p", "%%%0")
+      hex = ("\n" .. f:read("a")):match("\n%s*" .. name .. '%s*=%s*"#?(%x%x%x%x%x%x)"')
+      f:close()
+    end
+    if hex == nil then
+      notify("No colour \"" .. config.border .. "\" in the theme; pinned windows keep the usual border")
+    end
+  end
+  if hex then
+    pinned_border = { "rgba(" .. hex .. "ff)", "rgba(" .. hex .. "aa)" }
+  end
+end
+
+-- The theme's border colour for normal windows, as a set_prop value (the first
+-- colour of a gradient: set_prop takes one).
+local function theme_border(option)
+  local g = hl.get_config(option)
+  local c = g and g.colors and g.colors[1]
+  if type(c) == "number" then
+    c = string.format("0x%08X", c)
+  end
+  local alpha, rgb = tostring(c):match("^0[xX](%x%x)(%x%x%x%x%x%x)$")
+  return alpha and ("rgba(" .. rgb .. alpha .. ")") or nil
+end
+
+local function set_border(window, active, inactive)
+  if active then
+    dispatch_for(window, hl.dsp.window.set_prop, { prop = "active_border_color", value = active })
+  end
+  if inactive then
+    dispatch_for(window, hl.dsp.window.set_prop, { prop = "inactive_border_color", value = inactive })
+  end
+end
+
+-- A border colour can't be handed back to the theme, only set, and it survives
+-- reloads. So windows given the theme's colours on unpinning are remembered and
+-- get the current theme's colours again on every load (a theme change reloads).
+local restored_file = state_root .. "/restored-borders"
+
+local function style(window)
+  if pinned_border then
+    set_border(window, pinned_border[1], pinned_border[2])
+  end
+end
+
+local function unstyle(window)
+  if pinned_border == nil then
+    return
+  end
+  set_border(window, theme_border("general:col.active_border"), theme_border("general:col.inactive_border"))
+  local f = io.open(restored_file, "a")
+  if f then
+    f:write(window.address, "\n")
+    f:close()
+  end
 end
 
 -- Geometry -------------------------------------------------------------------------
@@ -249,6 +319,7 @@ local function unpin(window)
   if not p.was_floating and window.floating then
     dispatch_for(window, hl.dsp.window.float, { action = "toggle" })
   end
+  unstyle(window)
 end
 
 -- The screen edge a window is nearer to, and the width it would be pinned at:
@@ -294,6 +365,7 @@ local function pin_here(window, edge, width)
   if not window.pinned then
     dispatch_for(window, hl.dsp.window.pin, {})
   end
+  style(window)
   -- Placed once floating has settled, or Hyprland restores the window's old
   -- floating geometry over ours.
   local address = window.address
@@ -445,6 +517,34 @@ do
   end
   if changed then
     save()
+  end
+  -- The current theme's border colours (a theme change reloads Hyprland).
+  for address in pairs(pinned) do
+    local window = current(address)
+    if window then
+      style(window)
+    end
+  end
+  local f = io.open(restored_file, "r")
+  local keep = {}
+  if f then
+    for address in f:lines() do
+      local w = current(address)
+      -- Not one the Sidebar plugin has given its own border since.
+      local in_sidebar = w and w.workspace and w.workspace.name:match("^special:sidebar%d*$")
+      if w and not pinned[address] and not in_sidebar and not keep[address] then
+        keep[address] = true
+        set_border(w, theme_border("general:col.active_border"), theme_border("general:col.inactive_border"))
+      end
+    end
+    f:close()
+  end
+  f = io.open(restored_file, "w")
+  if f then
+    for address in pairs(keep) do
+      f:write(address, "\n")
+    end
+    f:close()
   end
 end
 sync()
