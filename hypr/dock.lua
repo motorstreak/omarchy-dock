@@ -240,14 +240,26 @@ local function unpin(window)
   end
 end
 
--- Pins a window on a regular workspace to the edge it's nearer to.
-local function pin_here(window)
+-- The screen edge a window is nearer to, and the width it would be pinned at:
+-- its own if it floats, else a share of the screen.
+local function measure(window)
+  local m = window.monitor
+  local mw = logical_size(m)
+  local edge = (window.at.x + window.size.x / 2) < (m.x + mw / 2) and "left" or "right"
+  local width = window.floating and window.size.x or mw * config.width
+  return edge, math.floor(math.min(math.max(width, 300), mw * 0.6))
+end
+
+-- Pins a window on a regular workspace to the given edge at the given width,
+-- or as measured where it is.
+local function pin_here(window, edge, width)
   local m = window.monitor
   if m == nil then
     return
   end
-  local mw = logical_size(m)
-  local edge = (window.at.x + window.size.x / 2) < (m.x + mw / 2) and "left" or "right"
+  if edge == nil then
+    edge, width = measure(window)
+  end
 
   -- One per edge: the window already there goes back to how it was.
   for address, p in pairs(pinned) do
@@ -261,8 +273,6 @@ local function pin_here(window)
     end
   end
 
-  local width = window.floating and window.size.x or mw * config.width
-  width = math.floor(math.min(math.max(width, 300), mw * 0.6))
   local p = { edge = edge, monitor = m.name, width = width, was_floating = window.floating == true }
   pinned[window.address] = p
   save()
@@ -299,11 +309,13 @@ local function toggle()
   if ws:sub(1, 8) == "special:" then
     -- A sidebar or the scratchpad: to the workspace on screen first. Hyprland
     -- won't move a pinned window (SUPER + O pins), and the Sidebar plugin lets
-    -- go of a window as it leaves, so pinning waits for that.
+    -- go of a window as it leaves (tiling it again, if it was tiled before), so
+    -- pinning waits for that, at the edge and width it has now.
     local regular = window.monitor and window.monitor.active_workspace
     if regular == nil then
       return
     end
+    local edge, width = measure(window)
     if window.pinned then
       dispatch_for(window, hl.dsp.window.pin, {})
     end
@@ -313,7 +325,7 @@ local function toggle()
     hl.timer(guard("pinning the window", function()
       local now = current(address)
       if now and now.workspace and now.workspace.name:sub(1, 8) ~= "special:" then
-        pin_here(now)
+        pin_here(now, edge, width)
         hl.dispatch(hl.dsp.focus({ window = selector(now) }))
       end
     end), { timeout = 150, type = "oneshot" })
