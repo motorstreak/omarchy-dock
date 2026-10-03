@@ -8,6 +8,8 @@
 --   SUPER + ALT + P  pin the focused window to the screen edge it's nearer to,
 --                    or unpin a pinned one (it goes back to floating or tiled,
 --                    as it was)
+--   SUPER + SHIFT + LEFT/RIGHT  (a pinned window focused) move it to that edge;
+--                    if a window is pinned there, the two swap edges
 --
 -- Any window can be pinned, sidebars from the Sidebar plugin included: pinning
 -- one moves it out of its sidebar workspace first, which makes it an ordinary
@@ -304,6 +306,9 @@ local function pin_here(window, edge, width)
   sync()
 end
 
+-- Defined further down: pinning and unpinning re-check who has the swap keys.
+local sync_keys_soon
+
 -- SUPER + ALT + P on the focused window.
 local function toggle()
   local window = hl.get_active_window()
@@ -312,6 +317,7 @@ local function toggle()
   end
   if pinned[window.address] then
     unpin(window)
+    sync_keys_soon()
     return
   end
   local ws = window.workspace and window.workspace.name or ""
@@ -335,12 +341,77 @@ local function toggle()
       local now = current(address)
       if now and now.workspace and now.workspace.name:sub(1, 8) ~= "special:" then
         pin_here(now, edge, width)
+        sync_keys_soon()
         hl.dispatch(hl.dsp.focus({ window = selector(now) }))
       end
     end), { timeout = 150, type = "oneshot" })
     return
   end
   pin_here(window)
+  sync_keys_soon()
+end
+
+-- SUPER + SHIFT + LEFT/RIGHT on a pinned window: to that edge, swapping with
+-- the window pinned there, if any. Each keeps its width.
+local function move(direction)
+  local window = hl.get_active_window()
+  local p = window and pinned[window.address]
+  if p == nil then
+    return
+  end
+  local edge = direction == "l" and "left" or "right"
+  if p.edge == edge then
+    return
+  end
+  for address, other in pairs(pinned) do
+    if other.monitor == p.monitor and other.edge == edge then
+      local w = current(address)
+      if w then
+        other.edge = p.edge
+        place(w, other)
+      else
+        pinned[address] = nil
+      end
+    end
+  end
+  p.edge = edge
+  place(window, p)
+  save()
+  sync()
+end
+
+-- Omarchy's swap keys, which move a pinned window instead while one has focus.
+-- The Sidebar plugin takes the same keys while a sidebar has focus and binds
+-- Omarchy's back as it loses focus, so this acts just after it on each focus
+-- change, and leaves the keys to it when a sidebar has focus.
+local move_keys = {
+  { "SUPER + SHIFT + LEFT", "Swap window to the left", "l" },
+  { "SUPER + SHIFT + RIGHT", "Swap window to the right", "r" },
+}
+local keys_taken = false
+
+local function sync_keys()
+  local window = hl.get_active_window()
+  local want = window ~= nil and pinned[window.address] ~= nil and omarchy_default_bindings ~= false
+  if want == keys_taken then
+    return
+  end
+  keys_taken = want
+  for _, k in ipairs(move_keys) do
+    hl.unbind(k[1])
+    if want then
+      local direction = k[3]
+      o.bind(k[1], "Move pinned window", guard("moving the pinned window", function()
+        move(direction)
+      end))
+    elseif not (sidebar and sidebar.keys_taken and sidebar.keys_taken()) then
+      o.bind(k[1], k[2], hl.dsp.window.swap({ direction = k[3] }))
+    end
+  end
+end
+
+sync_keys_soon = function()
+  hl.timer(guard("updating the dock keys", sync_keys), { timeout = 5, type = "oneshot" })
 end
 
 -- When the plugin is disabled: every pinned window back to how it was.
@@ -376,6 +447,8 @@ sync()
 
 -- Events ---------------------------------------------------------------------------------
 
+hl.on("window.active", guard("focus change", sync_keys_soon))
+
 hl.on("window.close", guard("closing a window", function(window)
   local address = window and window.address
   if address and pinned[address] then
@@ -405,6 +478,7 @@ end
 -- For scripting and tests: `hyprctl eval 'dock.toggle()'` etc.
 dock = {
   toggle = toggle,
+  move = move,
   release = release,
   sync = sync,
 }

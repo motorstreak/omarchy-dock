@@ -23,6 +23,7 @@ they were and the key goes away.
 | Key | Action |
 |---|---|
 | `Super + Alt + P` | Pin the focused window to the screen edge it's nearer to, or unpin a pinned one |
+| `Super + Shift + Left/Right` | With a pinned window focused: move it to that edge. If a window is pinned there, the two swap edges (each keeps its width) |
 
 - One window per edge of each monitor: pinning another window on the same edge
   unpins the first.
@@ -33,6 +34,10 @@ they were and the key goes away.
 - Works with sidebars from the [Sidebar](https://github.com/motorstreak/omarchy-sidebar)
   plugin: pinning one turns it into an ordinary window, pinned. To make it a
   sidebar again, unpin it and press `Super + Alt + B`.
+- `Super + Shift + Left/Right` are Omarchy's swap keys; the dock takes them only
+  while a pinned window has focus and hands them back after. Together with the
+  Sidebar plugin (which takes them while a sidebar has focus), each gets them
+  in turn.
 - Pinned windows are Hyprland's own pinned windows (as with `Super + O`), so
   they float above tiled ones; the reserved strip is what keeps the two apart.
   Floating and fullscreen windows can still go over it.
