@@ -26,9 +26,10 @@ they were and the key goes away.
 | `Super + Shift + Left/Right` | With a pinned window focused: move it to that edge. If a window is pinned there, the two swap edges (each keeps its width) |
 | `Super + Minus / Equal` | With a pinned window focused: move its inner edge left / right, exactly as between two tiled windows; tiled windows grow or shrink to match (`Alt`: a little, `Ctrl`: a lot) |
 
-- Pinned windows get a border in the theme's cyan, so they stand out from
-  tiled windows (and from sidebars, which use the theme's foreground colour).
-  Unpinned, a window gets the theme's usual border back.
+- Pinned windows have no border: the window fills the space a tiled window's
+  border would, so its edges line up with the tiled windows beside it.
+  Unpinned, a window gets the theme's usual border back. (`border` below can
+  give them a coloured border instead.)
 - One window per edge of each monitor: pinning another window on the same edge
   unpins the first.
 - A window that was floating keeps its width; a tiled one gets 30% of the
@@ -59,7 +60,7 @@ reload Hyprland (`hyprctl reload`). All options, with their defaults:
 return {
   pin = "SUPER + ALT + P", -- false leaves it unbound
   width = 0.3,             -- width for a tiled window being pinned, as a share of the screen (0.1-0.8)
-  border = "cyan",         -- pinned windows' border: a theme colour name ("green", "foreground", ...), "#8cbfb8", or false
+  border = "none",         -- pinned windows' border: "none", a theme colour name ("cyan", "green", ...), "#8cbfb8", or false for the usual one
 }
 ```
 

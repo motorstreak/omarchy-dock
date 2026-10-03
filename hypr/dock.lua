@@ -74,10 +74,11 @@ end
 local defaults = {
   pin = "SUPER + ALT + P", -- false leaves it unbound
   width = 0.3, -- width of a pinned window that wasn't floating, as a share of the screen
-  -- Border colour of pinned windows: a colour name from the theme's colors.toml
+  -- Pinned windows' border: "none" (no border; the window fills the space a
+  -- tiled window's border would), a colour name from the theme's colors.toml
   -- ("cyan", "green", "foreground", ...), a colour such as "#8cbfb8", or false
   -- for the usual border.
-  border = "cyan",
+  border = "none",
 }
 
 local config = {}
@@ -163,9 +164,11 @@ end
 
 -- Borders ------------------------------------------------------------------------
 
--- Pinned windows' border colours (focused, unfocused), or nil to leave borders be.
+local no_border = config.border == "none"
+
+-- Pinned windows' border colours (focused, unfocused), or nil to leave them be.
 local pinned_border = nil
-if config.border then
+if config.border and not no_border then
   local hex = config.border:match("^#(%x%x%x%x%x%x)$")
   if hex == nil then
     local f = io.open(state_home .. "/omarchy/current/theme/colors.toml", "r")
@@ -210,15 +213,18 @@ end
 local restored_file = state_root .. "/restored-borders"
 
 local function style(window)
-  if pinned_border then
+  if no_border then
+    dispatch_for(window, hl.dsp.window.set_prop, { prop = "border_size", value = "0" })
+  elseif pinned_border then
     set_border(window, pinned_border[1], pinned_border[2])
   end
 end
 
 local function unstyle(window)
-  if pinned_border == nil then
-    return
-  end
+  -- Unlike a colour, a size can be handed back to the config.
+  dispatch_for(window, hl.dsp.window.set_prop, { prop = "border_size", value = "unset" })
+  -- The theme's colours, also after border = "none" (a window pinned with a
+  -- coloured border keeps that colour, unseen, until now).
   set_border(window, theme_border("general:col.active_border"), theme_border("general:col.inactive_border"))
   local f = io.open(restored_file, "a")
   if f then
@@ -240,7 +246,11 @@ local function gaps()
   return 0, 0, 0, 0
 end
 
+-- A pinned window's border width: none with border = "none".
 local function border()
+  if no_border then
+    return 0
+  end
   local b = hl.get_config("general:border_size")
   return type(b) == "number" and b or 0
 end
@@ -587,6 +597,14 @@ do
     local window = current(address)
     if window then
       style(window)
+    end
+  end
+  -- Placed again once the strips below arrive: a changed border or gap moves
+  -- where a pinned window goes.
+  for address in pairs(pinned) do
+    local window = current(address)
+    if window then
+      place_with_strip(window)
     end
   end
   local f = io.open(restored_file, "r")
