@@ -397,6 +397,10 @@ local function sync_keys()
     return
   end
   keys_taken = want
+  -- A sidebar with focus has bound its own over these already: leave them.
+  if not want and sidebar and sidebar.keys_taken and sidebar.keys_taken() then
+    return
+  end
   for _, k in ipairs(move_keys) do
     hl.unbind(k[1])
     if want then
@@ -404,7 +408,7 @@ local function sync_keys()
       o.bind(k[1], "Move pinned window", guard("moving the pinned window", function()
         move(direction)
       end))
-    elseif not (sidebar and sidebar.keys_taken and sidebar.keys_taken()) then
+    else
       o.bind(k[1], k[2], hl.dsp.window.swap({ direction = k[3] }))
     end
   end
