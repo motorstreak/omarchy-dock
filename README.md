@@ -24,6 +24,7 @@ they were and the key goes away.
 |---|---|
 | `Super + Alt + P` | Pin the focused window to the screen edge it's nearer to, or unpin a pinned one |
 | `Super + Shift + Left/Right` | With a pinned window focused: move it to that edge. If a window is pinned there, the two swap edges (each keeps its width) |
+| `Super + Minus / Equal` | With a pinned window focused: move its inner edge left / right, exactly as between two tiled windows; tiled windows grow or shrink to match (`Alt`: a little, `Ctrl`: a lot) |
 
 - Pinned windows get a border in the theme's cyan, so they stand out from
   tiled windows (and from sidebars, which use the theme's foreground colour).
@@ -37,8 +38,9 @@ they were and the key goes away.
 - Works with sidebars from the [Sidebar](https://github.com/motorstreak/omarchy-sidebar)
   plugin: pinning one turns it into an ordinary window, pinned. To make it a
   sidebar again, unpin it and press `Super + Alt + B`.
-- `Super + Shift + Left/Right` are Omarchy's swap keys; the dock takes them only
-  while a pinned window has focus and hands them back after. Together with the
+- `Super + Shift + Left/Right` and `Super + [Alt/Ctrl] + Minus/Equal` are
+  Omarchy's swap and resize keys; the dock takes them only while a pinned window
+  has focus and hands them back after. Together with the
   Sidebar plugin (which takes them while a sidebar has focus), each gets them
   in turn.
 - Pinned windows are Hyprland's own pinned windows (as with `Super + O`), so
