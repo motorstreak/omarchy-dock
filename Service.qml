@@ -92,7 +92,12 @@ Item {
   Connections {
     target: Hyprland
     function onRawEvent(event) {
-      if (String(event && event.name ? event.name : "") === "configreloaded") root.load()
+      var name = String(event && event.name ? event.name : "")
+      if (name === "configreloaded") root.load()
+      // Hyprland doesn't move other windows while one is fullscreen, so a
+      // pinned window placed meanwhile (after a reload, say) is placed again.
+      else if (name === "fullscreen" && String(event.data) === "0")
+        Quickshell.execDetached(["hyprctl", "eval", "if dock and dock.refresh then dock.refresh() end"])
     }
   }
 
