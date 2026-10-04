@@ -1,9 +1,9 @@
 # Omarchy Dock
 
 Pin any window to the left or right edge of the screen. A pinned window stays
-there at full height on every workspace, and that strip of the screen is kept
-for it: tiled windows are laid out beside it, never under it, as if it were part
-of the bar.
+there at full height (or stacked with others pinned to that edge) on every
+workspace, and that strip of the screen is kept for it: tiled windows are laid
+out beside it, never under it, as if it were part of the bar.
 
 ## Install
 
@@ -23,25 +23,29 @@ they were and the key goes away.
 | Key | Action |
 |---|---|
 | `Super + Alt + P` | Pin the focused window to the screen edge it's nearer to, or unpin a pinned one |
-| `Super + Shift + Left/Right` | With a pinned window focused: move it to that edge. If a window is pinned there, the two swap edges (each keeps its width) |
+| `Super + Shift + Left/Right` | With a pinned window focused: move it to that edge, into the stack there (taking its width) |
+| `Super + Shift + Up/Down` | With a pinned window focused: move it up / down its stack |
 | `Super + Minus / Equal` | With a pinned window focused: move its inner edge left / right, exactly as between two tiled windows; tiled windows grow or shrink to match (`Alt`: a little, `Ctrl`: a lot) |
-| `Super + Shift + Minus / Equal` | With a pinned window focused: nothing. It always fills the height below the bar, so it can't grow past the screen |
+| `Super + Shift + Minus / Equal` | With a pinned window focused: nothing. It always fills the height below the bar (or its share of a stack), so it can't grow past the screen |
 
 - Pinned windows have the usual border in the theme's cyan, so they're easy to
   tell from other windows (and from sidebars, which use the theme's green).
   Unpinned, a window gets the theme's usual border back. (`border = "none"`
   removes it.)
-- One window per edge of each monitor: pinning another window on the same edge
-  unpins the first.
+- Several windows can be pinned to one edge: they stack, sharing its height
+  equally with the same gap as between tiled windows, and one width (resizing
+  one resizes the stack). A window joins the stack above or below the others by
+  where it was on screen.
 - A window that was floating keeps its width; a tiled one gets 30% of the
-  screen (see `width` below). It always takes the full height below the bar.
+  screen (see `width` below). It always takes the full height below the bar
+  (shared, in a stack).
 - Unpinning puts the window back the way it was: floating where it is, or tiled
   into the workspace on screen.
 - Apps are remembered: close a pinned app and it's pinned again, on the same
   edge and at the same width, the next time it opens, also after logging out.
-  The width is kept as a share of the screen, so it fits another monitor or
-  resolution in proportion. Only the app's first window is pinned (a second one
-  opens as usual), and only if that edge is free. Unpinning an app with
+  The width and its place in the stack are kept as shares of the screen, so
+  they fit another monitor or resolution in proportion. Only the app's first
+  window is pinned (a second one opens as usual). Unpinning an app with
   `Super + Alt + P` forgets it.
 - Plain terminals aren't remembered, since every program run in one shares its
   app id. A terminal program started with `omarchy-launch-tui <program>` (as
@@ -49,7 +53,7 @@ they were and the key goes away.
 - Works with sidebars from the [Sidebar](https://github.com/motorstreak/omarchy-sidebar)
   plugin: pinning one turns it into an ordinary window, pinned. To make it a
   sidebar again, unpin it and press `Super + Alt + B`.
-- `Super + Shift + Left/Right` and `Super + [Shift/Alt/Ctrl] + Minus/Equal` are
+- `Super + Shift + arrows` and `Super + [Shift/Alt/Ctrl] + Minus/Equal` are
   Omarchy's swap and resize keys; the dock takes them only while a pinned window
   has focus and hands them back after. Together with the
   Sidebar plugin (which takes them while a sidebar has focus), each gets them

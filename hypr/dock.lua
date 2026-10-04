@@ -13,7 +13,7 @@
 --   SUPER + SHIFT + UP/DOWN  (a pinned window focused) move it up / down its stack
 --   SUPER + MINUS/EQUAL  (a pinned window focused) move its inner edge left /
 --                    right, as between tiled windows (ALT: a little, CTRL: a lot);
---                    with SHIFT (height) it stays at full height
+--                    with SHIFT (height) it keeps its height
 --
 -- Each app pinned is remembered, its edge and width (a share of the screen):
 -- when it next opens (its first window, on a regular workspace), it's pinned
@@ -710,6 +710,8 @@ local function move(direction)
     p.width = others[1].p.width
   end
   p.edge = edge
+  -- Level with one there already (both in the middle of their slots): below it.
+  p.pos = p.pos + 0.0001
   save()
   sync()
   place_stack(p.monitor, from)
@@ -746,7 +748,7 @@ local function resize(dx)
   place_stack(p.monitor, p.edge)
 end
 
--- A pinned window's height keys: it stays at full height, in place.
+-- A pinned window's height keys: it keeps its height (its share of the stack), in place.
 local function keep_height()
   local window = hl.get_active_window()
   local p = window and pinned[window.address]
