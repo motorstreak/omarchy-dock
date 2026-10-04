@@ -2,14 +2,15 @@
 --
 -- Pins a window to the left or right screen edge: it floats there at full
 -- height on every workspace, and that strip of the screen is reserved, so tiled
--- windows are laid out beside it instead of under it. One window per edge of
--- each monitor.
+-- windows are laid out beside it instead of under it. Several windows on one
+-- edge stack, sharing its height (and one width).
 --
 --   SUPER + ALT + P  pin the focused window to the screen edge it's nearer to,
 --                    or unpin a pinned one (it goes back to floating or tiled,
 --                    as it was)
---   SUPER + SHIFT + LEFT/RIGHT  (a pinned window focused) move it to that edge;
---                    if a window is pinned there, the two swap edges
+--   SUPER + SHIFT + LEFT/RIGHT  (a pinned window focused) move it to that edge,
+--                    into the stack there
+--   SUPER + SHIFT + UP/DOWN  (a pinned window focused) move it up / down its stack
 --   SUPER + MINUS/EQUAL  (a pinned window focused) move its inner edge left /
 --                    right, as between tiled windows (ALT: a little, CTRL: a lot);
 --                    with SHIFT (height) it stays at full height
@@ -132,7 +133,9 @@ end
 
 -- Pinned windows ------------------------------------------------------------------
 
--- By address: { edge = "left"|"right", monitor = name, width, was_floating }.
+-- By address: { edge = "left"|"right", monitor = name, width, was_floating, pos }.
+-- pos orders a stack, top to bottom: the middle of the window's slot as a share
+-- of the screen's height.
 -- Kept in a file too, as a Hyprland reload runs this file afresh while the
 -- windows stay pinned.
 local pinned = {}
@@ -142,18 +145,20 @@ do
   local f = io.open(pinned_file, "r")
   if f then
     for line in f:lines() do
-      local address, edge, monitor, width, floated = line:match("^(%S+) (%a+) (%S+) (%d+) ([01])$")
+      local address, edge, monitor, width, floated, pos = line:match("^(%S+) (%a+) (%S+) (%d+) ([01]) ?([%d.]*)$")
       if address and (edge == "left" or edge == "right") then
-        pinned[address] = { edge = edge, monitor = monitor, width = tonumber(width), was_floating = floated == "1" }
+        pinned[address] = { edge = edge, monitor = monitor, width = tonumber(width), was_floating = floated == "1",
+          pos = tonumber(pos) or 0.5 }
       end
     end
     f:close()
   end
 end
 
--- By app: { edge, share } of the last window of it pinned, its width as a share
--- of the monitor's (so it opens in proportion on another monitor), kept while
--- it's pinned (a logout or crash doesn't lose it) and forgotten when unpinned.
+-- By app: { edge, share, pos } of the last window of it pinned, its width as a
+-- share of the monitor's (so it opens in proportion on another monitor) and its
+-- place in the stack, kept while it's pinned (a logout or crash doesn't lose
+-- it) and forgotten when unpinned.
 local remembered = {}
 local remembered_file = state_root .. "/remembered"
 
@@ -180,9 +185,12 @@ do
   local f = io.open(remembered_file, "r")
   if f then
     for line in f:lines() do
-      local edge, share, app = line:match("^(%a+) ([%d.]+) (.+)$")
+      local edge, share, pos, app = line:match("^(%a+) ([%d.]+) ([%d.]+) (.+)$")
+      if edge == nil then
+        edge, share, app = line:match("^(%a+) ([%d.]+) (.+)$")
+      end
       if (edge == "left" or edge == "right") and tonumber(share) and not TERMINALS[app] then
-        remembered[app] = { edge = edge, share = tonumber(share) }
+        remembered[app] = { edge = edge, share = tonumber(share), pos = tonumber(pos) }
       end
     end
     f:close()
@@ -193,7 +201,7 @@ local function save_remembered()
   local f = io.open(remembered_file, "w")
   if f then
     for app, r in pairs(remembered) do
-      f:write(string.format("%s %.4f %s\n", r.edge, r.share, app))
+      f:write(string.format("%s %.4f %.4f %s\n", r.edge, r.share, r.pos or 0.5, app))
     end
     f:close()
   end
@@ -211,7 +219,7 @@ local function save()
   local f = io.open(pinned_file, "w")
   if f then
     for address, p in pairs(pinned) do
-      f:write(string.format("%s %s %s %d %d\n", address, p.edge, p.monitor, p.width, p.was_floating and 1 or 0))
+      f:write(string.format("%s %s %s %d %d %.4f\n", address, p.edge, p.monitor, p.width, p.was_floating and 1 or 0, p.pos))
     end
     f:close()
   end
@@ -228,8 +236,8 @@ local function save()
       local r = app and remembered[app]
       if app and mw and mw > 0 then
         local share = math.floor(p.width / mw * 10000 + 0.5) / 10000
-        if r == nil or r.edge ~= p.edge or r.share ~= share then
-          remembered[app] = { edge = p.edge, share = share }
+        if r == nil or r.edge ~= p.edge or r.share ~= share or r.pos ~= p.pos then
+          remembered[app] = { edge = p.edge, share = share, pos = p.pos }
           changed = true
         end
       end
@@ -251,6 +259,23 @@ end
 
 local function current(address)
   return hl.get_window("address:" .. address)
+end
+
+-- The windows pinned to one edge of a monitor, top to bottom: { address, p }.
+local function stack(monitor, edge)
+  local list = {}
+  for address, p in pairs(pinned) do
+    if p.monitor == monitor and p.edge == edge then
+      list[#list + 1] = { address = address, p = p }
+    end
+  end
+  table.sort(list, function(a, b)
+    if a.p.pos ~= b.p.pos then
+      return a.p.pos < b.p.pos
+    end
+    return a.address < b.address
+  end)
+  return list
 end
 
 -- Borders ------------------------------------------------------------------------
@@ -354,6 +379,15 @@ local function gaps()
   return 0, 0, 0, 0
 end
 
+-- The space between two tiled windows (each keeps gaps_in from the other).
+local function inner_gap()
+  local g = hl.get_config("general:gaps_in")
+  if type(g) == "table" then
+    g = g.top
+  end
+  return 2 * (type(g) == "number" and g or 0)
+end
+
 -- A pinned window's border width: none with border = "none".
 local function border()
   if no_border then
@@ -381,8 +415,9 @@ local function monitor_named(name)
 end
 
 -- Puts a pinned window in its strip, spaced like a tiled window: its border the
--- outer gap away from the screen edges and the bar. (Hyprland's position and
--- size are the window's own, inside the border.)
+-- outer gap away from the screen edges and the bar, and windows stacked on one
+-- edge the gap between tiled windows apart, sharing the height equally. (Hyprland's
+-- position and size are the window's own, inside the border.)
 local function place(window, p)
   local m = monitor_named(p.monitor)
   if m == nil then
@@ -392,8 +427,19 @@ local function place(window, p)
   local top, right, bottom, left = gaps()
   local b = border()
   local r = m.reserved or {}
-  local y = m.y + (r.top or 0) + top + b
-  local height = mh - (r.top or 0) - (r.bottom or 0) - top - bottom - 2 * b
+  local list = stack(p.monitor, p.edge)
+  local n, i = math.max(#list, 1), 1
+  for k, e in ipairs(list) do
+    if e.address == window.address then
+      i = k
+    end
+  end
+  local gap = inner_gap()
+  local avail = mh - (r.top or 0) - (r.bottom or 0) - top - bottom
+  local slot = math.floor((avail - (n - 1) * gap) / n)
+  local y = m.y + (r.top or 0) + top + (i - 1) * (slot + gap) + b
+  -- The last one takes what rounding left over.
+  local height = (i == n and (avail - (n - 1) * (slot + gap)) or slot) - 2 * b
   local x = p.edge == "left" and (m.x + left + b) or (m.x + mw - right - b - p.width)
   dispatch_for(window, hl.dsp.window.resize, { x = math.floor(p.width), y = math.floor(height) })
   dispatch_for(window, hl.dsp.window.move, { x = math.floor(x), y = math.floor(y) })
@@ -430,10 +476,18 @@ local function strip_size(p)
 end
 
 local function sync()
-  local strips = {}
+  -- One strip per stack.
+  local sizes, strips = {}, {}
   for _, p in pairs(pinned) do
+    local key = p.monitor .. " " .. p.edge
+    local size = strip_size(p)
+    if sizes[key] == nil or size > sizes[key].size then
+      sizes[key] = { monitor = p.monitor, edge = p.edge, size = size }
+    end
+  end
+  for _, st in pairs(sizes) do
     strips[#strips + 1] = string.format('{"monitor":"%s","edge":"%s","size":%d}',
-      p.monitor:gsub('[%c"\\]', ""), p.edge, strip_size(p))
+      st.monitor:gsub('[%c"\\]', ""), st.edge, st.size)
   end
   seq = seq + 1
   hl.exec_cmd("omarchy-shell -q omarchy-dock set " .. quote(string.format('{"session":"%s","seq":%d,"strips":[%s]}',
@@ -445,7 +499,7 @@ end
 -- beside it start moving in the same frame instead of one after the other.
 -- Checks every 2 ms; after about 200 ms (something else reserving space on that
 -- edge, say) it places the window anyway.
-local place_with_strip
+local place_with_strip, place_stack
 
 -- An app can refuse to be narrower than its own minimum: the window then
 -- keeps a larger width than asked, placed for the smaller one, and hangs off
@@ -456,10 +510,13 @@ local function adopt_width(address)
   hl.timer(guard("checking the pinned window's width", function()
     local now, p = current(address), pinned[address]
     if now and p and now.size and now.size.x > p.width + 1 then
-      p.width = math.floor(now.size.x)
+      -- The whole stack: it shares one width.
+      for _, e in ipairs(stack(p.monitor, p.edge)) do
+        e.p.width = math.floor(now.size.x)
+      end
       save()
       sync()
-      place_with_strip(now)
+      place_stack(p.monitor, p.edge)
     end
   end), { timeout = 150, type = "oneshot" })
 end
@@ -486,6 +543,22 @@ place_with_strip = function(window)
   check()
 end
 
+-- Every window of a stack placed again (one joined, left, or moved in it). Their
+-- pos becomes the middle of their slots, so it stays a place on screen.
+place_stack = function(monitor, edge)
+  local list = stack(monitor, edge)
+  for k, e in ipairs(list) do
+    e.p.pos = math.floor((k - 0.5) / #list * 10000 + 0.5) / 10000
+  end
+  save()
+  for _, e in ipairs(list) do
+    local window = current(e.address)
+    if window then
+      place_with_strip(window)
+    end
+  end
+end
+
 -- Pinning ----------------------------------------------------------------------------
 
 local function unpin(window)
@@ -496,6 +569,7 @@ local function unpin(window)
   pinned[window.address] = nil
   save()
   sync()
+  place_stack(p.monitor, p.edge)
   if window.pinned then
     dispatch_for(window, hl.dsp.window.pin, {})
   end
@@ -505,44 +579,34 @@ local function unpin(window)
   unstyle(window)
 end
 
--- The screen edge a window is nearer to, and the width it would be pinned at:
--- its own if it floats, else a share of the screen.
+-- The screen edge a window is nearer to, the width it would be pinned at (its
+-- own if it floats, else a share of the screen) and its height on screen (its
+-- middle as a share of the screen's height), which places it in a stack.
 local function measure(window)
   local m = window.monitor
-  local mw = logical_size(m)
+  local mw, mh = logical_size(m)
   local edge = (window.at.x + window.size.x / 2) < (m.x + mw / 2) and "left" or "right"
   local width = window.floating and window.size.x or mw * config.width
-  return edge, math.floor(math.min(math.max(width, 300), mw * 0.6))
+  local pos = (window.at.y + window.size.y / 2 - m.y) / mh
+  return edge, math.floor(math.min(math.max(width, 300), mw * 0.6)), pos
 end
 
--- Pins a window on a regular workspace to the given edge at the given width,
--- or as measured where it is.
-local function pin_here(window, edge, width)
+-- Pins a window on a regular workspace to the given edge at the given width and
+-- height in the stack there, or as measured where it is. In a stack, it takes
+-- the stack's width.
+local function pin_here(window, edge, width, pos)
   local m = window.monitor
   if m == nil then
     return
   end
-  if edge == nil then
-    edge, width = measure(window)
+  local measured_edge, measured_width, measured_pos = measure(window)
+  edge, width, pos = edge or measured_edge, width or measured_width, pos or measured_pos
+  local others = stack(m.name, edge)
+  if #others > 0 then
+    width = others[1].p.width
   end
 
-  -- One per edge: the window already there goes back to how it was (and its
-  -- app, unpinned, is forgotten).
-  for address, p in pairs(pinned) do
-    if p.monitor == m.name and p.edge == edge and address ~= window.address then
-      local other = current(address)
-      if other then
-        if app_of(other) ~= app_of(window) then
-          forget(other)
-        end
-        unpin(other)
-      else
-        pinned[address] = nil
-      end
-    end
-  end
-
-  local p = { edge = edge, monitor = m.name, width = width, was_floating = window.floating == true }
+  local p = { edge = edge, monitor = m.name, width = width, was_floating = window.floating == true, pos = pos }
   pinned[window.address] = p
   save()
 
@@ -558,12 +622,10 @@ local function pin_here(window, edge, width)
   style(window)
   -- Placed once floating has settled, or Hyprland restores the window's old
   -- floating geometry over ours.
-  local address = window.address
+  local address, monitor = window.address, m.name
   hl.timer(guard("placing the pinned window", function()
-    local now = current(address)
-    if now and pinned[address] then
-      place(now, pinned[address])
-      adopt_width(address)
+    if pinned[address] then
+      place_stack(monitor, pinned[address].edge)
     end
   end), { timeout = 50, type = "oneshot" })
   sync()
@@ -594,7 +656,7 @@ local function toggle()
     if regular == nil then
       return
     end
-    local edge, width = measure(window)
+    local edge, width, pos = measure(window)
     if window.pinned then
       dispatch_for(window, hl.dsp.window.pin, {})
     end
@@ -604,7 +666,7 @@ local function toggle()
     hl.timer(guard("pinning the window", function()
       local now = current(address)
       if now and now.workspace and now.workspace.name:sub(1, 8) ~= "special:" then
-        pin_here(now, edge, width)
+        pin_here(now, edge, width, pos)
         sync_keys_soon()
         hl.dispatch(hl.dsp.focus({ window = selector(now) }))
       end
@@ -615,37 +677,43 @@ local function toggle()
   sync_keys_soon()
 end
 
--- SUPER + SHIFT + LEFT/RIGHT on a pinned window: to that edge, swapping with
--- the window pinned there, if any. Each keeps its width.
+-- SUPER + SHIFT + LEFT/RIGHT on a pinned window: to that edge, into the stack
+-- there (at its height on screen, taking the stack's width). UP/DOWN: one place
+-- up / down its stack.
 local function move(direction)
   local window = hl.get_active_window()
   local p = window and pinned[window.address]
   if p == nil then
     return
   end
+  if direction == "u" or direction == "d" then
+    local list = stack(p.monitor, p.edge)
+    for k, e in ipairs(list) do
+      if e.address == window.address then
+        local other = list[direction == "u" and k - 1 or k + 1]
+        if other then
+          p.pos, other.p.pos = other.p.pos, p.pos
+          place_stack(p.monitor, p.edge)
+        end
+        return
+      end
+    end
+    return
+  end
   local edge = direction == "l" and "left" or "right"
   if p.edge == edge then
     return
   end
-  local swapped = nil
-  for address, other in pairs(pinned) do
-    if other.monitor == p.monitor and other.edge == edge then
-      local w = current(address)
-      if w then
-        other.edge = p.edge
-        swapped = w
-      else
-        pinned[address] = nil
-      end
-    end
+  local from = p.edge
+  local others = stack(p.monitor, edge)
+  if #others > 0 then
+    p.width = others[1].p.width
   end
   p.edge = edge
   save()
   sync()
-  place_with_strip(window)
-  if swapped then
-    place_with_strip(swapped)
-  end
+  place_stack(p.monitor, from)
+  place_stack(p.monitor, edge)
 end
 
 -- Omarchy's swap and resize keys, which move and resize a pinned window instead
@@ -668,10 +736,14 @@ local function resize(dx)
   end
   local mw = logical_size(m)
   local width = p.edge == "right" and (p.width - dx) or (p.width + dx)
-  p.width = math.floor(math.min(math.max(width, 300), mw * 0.6))
+  width = math.floor(math.min(math.max(width, 300), mw * 0.6))
+  -- The whole stack: it shares one width.
+  for _, e in ipairs(stack(p.monitor, p.edge)) do
+    e.p.width = width
+  end
   save()
   sync()
-  place_with_strip(window)
+  place_stack(p.monitor, p.edge)
 end
 
 -- A pinned window's height keys: it stays at full height, in place.
@@ -688,6 +760,8 @@ end
 local dock_keys = {
   { "SUPER + SHIFT + LEFT", "Swap window to the left", hl.dsp.window.swap({ direction = "l" }), function() move("l") end },
   { "SUPER + SHIFT + RIGHT", "Swap window to the right", hl.dsp.window.swap({ direction = "r" }), function() move("r") end },
+  { "SUPER + SHIFT + UP", "Swap window up", hl.dsp.window.swap({ direction = "u" }), function() move("u") end },
+  { "SUPER + SHIFT + DOWN", "Swap window down", hl.dsp.window.swap({ direction = "d" }), function() move("d") end },
 }
 -- Spelled exactly as Omarchy binds them (default/hypr/bindings/tiling.lua):
 -- unbinding goes by the spelling, modifier order included.
@@ -921,9 +995,10 @@ end))
 
 hl.on("workspace.special_active", guard("pinned windows under special workspaces", sync_specials))
 
--- An app remembered opens: its first window is pinned where the app was, once
--- Hyprland has placed it, if it's on a regular workspace by then (the Sidebar
--- plugin moves its windows to theirs) and that edge is free.
+-- An app remembered opens: its first window is pinned where the app was (into
+-- the stack on that edge, at its old height in it), once Hyprland has placed it,
+-- if it's on a regular workspace by then (the Sidebar plugin moves its windows
+-- to theirs).
 local function restore(window)
   local app = app_of(window)
   local r = app and remembered[app]
@@ -943,13 +1018,8 @@ local function restore(window)
     if m == nil or pinned[address] or ws:sub(1, 8) == "special:" or screensavers() > 0 then
       return
     end
-    for _, p in pairs(pinned) do
-      if p.monitor == m.name and p.edge == r.edge then
-        return
-      end
-    end
     local mw = logical_size(m)
-    pin_here(now, r.edge, math.floor(math.min(math.max(r.share * mw, 300), mw * 0.6)))
+    pin_here(now, r.edge, math.floor(math.min(math.max(r.share * mw, 300), mw * 0.6)), r.pos)
     sync_keys_soon()
   end), { timeout = 100, type = "oneshot" })
 end
@@ -971,10 +1041,12 @@ hl.on("window.close", guard("closing a window", function(window)
     return
   end
   local address = window and window.address
-  if address and pinned[address] then
+  local p = address and pinned[address]
+  if p then
     pinned[address] = nil
     save()
     sync()
+    place_stack(p.monitor, p.edge)
   end
 end))
 
@@ -985,9 +1057,11 @@ hl.on("window.move_to_workspace", guard("moving a window", function(window, work
       and workspace.name ~= PARKED then
     -- Made a sidebar, say: no longer one to pin when it opens.
     forget(window)
+    local p = pinned[window.address]
     pinned[window.address] = nil
     save()
     sync()
+    place_stack(p.monitor, p.edge)
   end
 end))
 
