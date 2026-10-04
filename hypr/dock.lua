@@ -709,7 +709,7 @@ sync()
 hl.on("window.active", guard("focus change", function()
   sync_keys_soon()
   -- After the focus change has raised whatever it raises.
-  hl.timer(guard("lowering pinned windows", lower_all), { timeout = 5, type = "oneshot" })
+  hl.timer(guard("lowering pinned windows", lower_all), { timeout = 1, type = "oneshot" })
 end))
 
 hl.on("window.open", guard("hiding pinned windows", function(window)
@@ -748,14 +748,16 @@ end))
 -- Keys -----------------------------------------------------------------------------------
 
 -- Clicking a floating window raises it (with no event to answer), so a pinned
--- window clicked would cover floating ones until the next focus change. Just
+-- window clicked would cover floating ones until the next focus change. Right
 -- after each left click (once Hyprland has raised what it raises), pinned
 -- windows go back under. Bound once, never unbound: the Sidebar plugin binds
 -- left click too, and unbinding a key removes every binding on it. It doesn't
 -- consume the click.
 hl.bind("mouse:272", guard("lowering pinned windows", function()
   if next(pinned) ~= nil then
-    hl.timer(guard("lowering pinned windows", lower_all), { timeout = 20, type = "oneshot" })
+    -- 1 ms: on the next turn of Hyprland's loop, after the click's raise but
+    -- before the next frame, so the raised window is never drawn.
+    hl.timer(guard("lowering pinned windows", lower_all), { timeout = 1, type = "oneshot" })
   end
 end), { non_consuming = true, description = "Keep pinned windows under floating ones" })
 
