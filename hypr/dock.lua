@@ -79,7 +79,7 @@ local defaults = {
   -- tiled window's border would), a colour name from the theme's colors.toml
   -- ("cyan", "green", "foreground", ...), a colour such as "#8cbfb8", or false
   -- for the usual border.
-  border = "none",
+  border = "cyan",
 }
 
 local config = {}
@@ -216,8 +216,12 @@ local restored_file = state_root .. "/restored-borders"
 local function style(window)
   if no_border then
     dispatch_for(window, hl.dsp.window.set_prop, { prop = "border_size", value = "0" })
-  elseif pinned_border then
-    set_border(window, pinned_border[1], pinned_border[2])
+  else
+    -- The usual width (a window pinned with border = "none" had none).
+    dispatch_for(window, hl.dsp.window.set_prop, { prop = "border_size", value = "unset" })
+    if pinned_border then
+      set_border(window, pinned_border[1], pinned_border[2])
+    end
   end
 end
 
