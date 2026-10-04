@@ -174,9 +174,19 @@ if config.border and not no_border then
   if hex == nil then
     local f = io.open(state_home .. "/omarchy/current/theme/colors.toml", "r")
     if f then
-      local name = config.border:gsub("%p", "%%%0")
-      hex = ("\n" .. f:read("a")):match("\n%s*" .. name .. '%s*=%s*"#?(%x%x%x%x%x%x)"')
+      local colours = "\n" .. f:read("a")
       f:close()
+      local pattern = '%s*=%s*"#?(%x%x%x%x%x%x)"'
+      -- Some themes give only the terminal palette (color0-color15): the
+      -- standard ANSI slot stands in for a missing colour name.
+      local palette = {
+        red = "color1", green = "color2", yellow = "color3", blue = "color4", magenta = "color5", cyan = "color6",
+        bright_red = "color9", bright_green = "color10", bright_yellow = "color11",
+        bright_blue = "color12", bright_magenta = "color13", bright_cyan = "color14",
+      }
+      local name = config.border:gsub("%p", "%%%0")
+      hex = colours:match("\n%s*" .. name .. pattern)
+        or (palette[config.border] and colours:match("\n%s*" .. palette[config.border] .. pattern))
     end
     if hex == nil then
       notify("No colour \"" .. config.border .. "\" in the theme; pinned windows keep the usual border")
