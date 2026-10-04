@@ -14,6 +14,10 @@
 --                    right, as between tiled windows (ALT: a little, CTRL: a lot);
 --                    with SHIFT (height) it stays at full height
 --
+-- Each app pinned is remembered, its edge and width: when it next opens (its
+-- first window, on a regular workspace), it's pinned there again. Unpinning it
+-- with SUPER + ALT + P forgets it.
+--
 -- Any window can be pinned, sidebars from the Sidebar plugin included: pinning
 -- one moves it out of its sidebar workspace first, which makes it an ordinary
 -- window again as far as that plugin is concerned.
@@ -81,6 +85,7 @@ local defaults = {
   -- for the usual border.
   border = "cyan",
   border_opacity = 1, -- 0 (clear) to 1 (solid), focused; unfocused is two thirds of it
+  remember = true, -- apps pinned when they closed open pinned again, at the same edge and width
 }
 
 local config = {}
@@ -145,6 +150,53 @@ do
   end
 end
 
+-- By app: { edge, share } of the last window of it pinned, its width as a share
+-- of the monitor's (so it opens in proportion on another monitor), kept while
+-- it's pinned (a logout or crash doesn't lose it) and forgotten when unpinned.
+local remembered = {}
+local remembered_file = state_root .. "/remembered"
+
+-- An app's name for this: its window class, without the Chromium profile of a
+-- web app ("chrome-app.example.com__-Profile_1"), which can differ per launch.
+local function app_of(window)
+  local class = window and window.class or ""
+  if class == "" then
+    return nil
+  end
+  return (class:gsub("^(chrome%-.+)%-Default$", "%1"):gsub("^(chrome%-.+)%-Profile_%d+$", "%1"))
+end
+
+do
+  local f = io.open(remembered_file, "r")
+  if f then
+    for line in f:lines() do
+      local edge, share, app = line:match("^(%a+) ([%d.]+) (.+)$")
+      if (edge == "left" or edge == "right") and tonumber(share) then
+        remembered[app] = { edge = edge, share = tonumber(share) }
+      end
+    end
+    f:close()
+  end
+end
+
+local function save_remembered()
+  local f = io.open(remembered_file, "w")
+  if f then
+    for app, r in pairs(remembered) do
+      f:write(string.format("%s %.4f %s\n", r.edge, r.share, app))
+    end
+    f:close()
+  end
+end
+
+local function forget(window)
+  local app = app_of(window)
+  if app and remembered[app] then
+    remembered[app] = nil
+    save_remembered()
+  end
+end
+
 local function save()
   local f = io.open(pinned_file, "w")
   if f then
@@ -152,6 +204,29 @@ local function save()
       f:write(string.format("%s %s %s %d %d\n", address, p.edge, p.monitor, p.width, p.was_floating and 1 or 0))
     end
     f:close()
+  end
+  if config.remember then
+    local changed = false
+    -- Monitor widths in layout pixels (as logical_size, defined below).
+    local widths = {}
+    for _, m in ipairs(hl.get_monitors()) do
+      widths[m.name] = ((m.transform or 0) % 2 == 1 and m.height or m.width) / m.scale
+    end
+    for address, p in pairs(pinned) do
+      local app = app_of(hl.get_window("address:" .. address))
+      local mw = widths[p.monitor]
+      local r = app and remembered[app]
+      if app and mw and mw > 0 then
+        local share = math.floor(p.width / mw * 10000 + 0.5) / 10000
+        if r == nil or r.edge ~= p.edge or r.share ~= share then
+          remembered[app] = { edge = p.edge, share = share }
+          changed = true
+        end
+      end
+    end
+    if changed then
+      save_remembered()
+    end
   end
 end
 
@@ -441,11 +516,15 @@ local function pin_here(window, edge, width)
     edge, width = measure(window)
   end
 
-  -- One per edge: the window already there goes back to how it was.
+  -- One per edge: the window already there goes back to how it was (and its
+  -- app, unpinned, is forgotten).
   for address, p in pairs(pinned) do
     if p.monitor == m.name and p.edge == edge and address ~= window.address then
       local other = current(address)
       if other then
+        if app_of(other) ~= app_of(window) then
+          forget(other)
+        end
         unpin(other)
       else
         pinned[address] = nil
@@ -490,6 +569,7 @@ local function toggle()
     return
   end
   if pinned[window.address] then
+    forget(window)
     unpin(window)
     sync_keys_soon()
     return
@@ -761,7 +841,6 @@ after_unpark = sync_specials
 
 -- Pinned windows that closed or were unpinned while this wasn't loaded.
 do
-  local changed = false
   for address in pairs(pinned) do
     local window = current(address)
     local ws = window and window.workspace and window.workspace.name or ""
@@ -769,14 +848,12 @@ do
     -- scratchpad (on a regular workspace; see above), which it's taken back from.
     if window == nil or (not window.pinned and ws ~= PARKED and ws:sub(1, 8) == "special:") then
       pinned[address] = nil
-      changed = true
     elseif not window.pinned and ws ~= PARKED then
       submerged[address] = true
     end
   end
-  if changed then
-    save()
-  end
+  -- (Always: windows pinned before apps were remembered get remembered.)
+  save()
   -- The current theme's border colours (a theme change reloads Hyprland).
   for address in pairs(pinned) do
     local window = current(address)
@@ -834,9 +911,44 @@ end))
 
 hl.on("workspace.special_active", guard("pinned windows under special workspaces", sync_specials))
 
-hl.on("window.open", guard("hiding pinned windows", function(window)
+-- An app remembered opens: its first window is pinned where the app was, once
+-- Hyprland has placed it, if it's on a regular workspace by then (the Sidebar
+-- plugin moves its windows to theirs) and that edge is free.
+local function restore(window)
+  local app = app_of(window)
+  local r = app and remembered[app]
+  if r == nil or app:match("^sidebar%.") then
+    return
+  end
+  for _, w in ipairs(hl.get_windows()) do
+    if w.address ~= window.address and app_of(w) == app then
+      return
+    end
+  end
+  local address = window.address
+  hl.timer(guard("pinning a remembered app", function()
+    local now = current(address)
+    local m = now and now.monitor
+    local ws = now and now.workspace and now.workspace.name or "special:"
+    if m == nil or pinned[address] or ws:sub(1, 8) == "special:" or screensavers() > 0 then
+      return
+    end
+    for _, p in pairs(pinned) do
+      if p.monitor == m.name and p.edge == r.edge then
+        return
+      end
+    end
+    local mw = logical_size(m)
+    pin_here(now, r.edge, math.floor(math.min(math.max(r.share * mw, 300), mw * 0.6)))
+    sync_keys_soon()
+  end), { timeout = 100, type = "oneshot" })
+end
+
+hl.on("window.open", guard("opening a window", function(window)
   if window and window.class == SCREENSAVER then
     park()
+  elseif window and config.remember then
+    restore(window)
   end
 end))
 
@@ -861,6 +973,8 @@ end))
 hl.on("window.move_to_workspace", guard("moving a window", function(window, workspace)
   if window and pinned[window.address] and workspace and workspace.name:sub(1, 8) == "special:"
       and workspace.name ~= PARKED then
+    -- Made a sidebar, say: no longer one to pin when it opens.
+    forget(window)
     pinned[window.address] = nil
     save()
     sync()
