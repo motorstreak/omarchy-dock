@@ -577,6 +577,57 @@ local function release()
   sync()
 end
 
+-- Screensaver ---------------------------------------------------------------------------
+
+-- Omarchy's screensaver is a fullscreen window on each monitor, and pinned
+-- windows stay on top of fullscreen ones. So while it runs they're parked on a
+-- hidden workspace (unpinned: Hyprland won't move a pinned window), and come
+-- back, pinned and in place, when the last screensaver window closes. Their
+-- strips stay, so tiled windows don't move.
+local SCREENSAVER = "org.omarchy.screensaver"
+local PARKED = "special:dock-hidden"
+
+local function screensavers()
+  local n = 0
+  for _, w in ipairs(hl.get_windows()) do
+    if w.class == SCREENSAVER then
+      n = n + 1
+    end
+  end
+  return n
+end
+
+local function park()
+  for address in pairs(pinned) do
+    local window = current(address)
+    if window and window.workspace and window.workspace.name ~= PARKED then
+      if window.pinned then
+        dispatch_for(window, hl.dsp.window.pin, {})
+      end
+      dispatch_for(window, hl.dsp.window.move, { workspace = PARKED, follow = false })
+    end
+  end
+end
+
+local function unpark()
+  for address, p in pairs(pinned) do
+    local window = current(address)
+    if window and window.workspace and window.workspace.name == PARKED then
+      local m = monitor_named(p.monitor)
+      local regular = m and m.active_workspace
+      if regular then
+        local target = tonumber(regular.name) and regular.name or ("name:" .. regular.name)
+        dispatch_for(window, hl.dsp.window.move, { workspace = target, follow = false })
+        local now = current(address)
+        if now and not now.pinned then
+          dispatch_for(now, hl.dsp.window.pin, {})
+        end
+        place_with_strip(now or window)
+      end
+    end
+  end
+end
+
 -- Loading ------------------------------------------------------------------------------
 
 -- Pinned windows that closed or were unpinned while this wasn't loaded.
@@ -584,7 +635,9 @@ do
   local changed = false
   for address in pairs(pinned) do
     local window = current(address)
-    if window == nil or not window.pinned then
+    -- (A parked one isn't pinned meanwhile; see Screensaver.)
+    local parked = window and window.workspace and window.workspace.name == PARKED
+    if window == nil or not (window.pinned or parked) then
       pinned[address] = nil
       changed = true
     end
@@ -603,6 +656,10 @@ do
   -- once Hyprland has finished reloading, which otherwise puts back the
   -- geometry it had, and once the strips below have arrived.
   hl.timer(guard("placing pinned windows", function()
+    -- Parked for a screensaver that has gone meanwhile: back.
+    if screensavers() == 0 then
+      unpark()
+    end
     for address in pairs(pinned) do
       local window = current(address)
       if window then
@@ -638,7 +695,20 @@ sync()
 
 hl.on("window.active", guard("focus change", sync_keys_soon))
 
+hl.on("window.open", guard("hiding pinned windows", function(window)
+  if window and window.class == SCREENSAVER then
+    park()
+  end
+end))
+
 hl.on("window.close", guard("closing a window", function(window)
+  if window and window.class == SCREENSAVER then
+    -- Closing as it fires: the last one gone when only it is left.
+    if screensavers() <= 1 then
+      unpark()
+    end
+    return
+  end
   local address = window and window.address
   if address and pinned[address] then
     pinned[address] = nil
@@ -650,7 +720,8 @@ end))
 -- A pinned window can't be moved to another workspace while pinned; if it gets
 -- there anyway (unpinned and moved, e.g. made a sidebar), it is no longer here.
 hl.on("window.move_to_workspace", guard("moving a window", function(window, workspace)
-  if window and pinned[window.address] and workspace and workspace.name:sub(1, 8) == "special:" then
+  if window and pinned[window.address] and workspace and workspace.name:sub(1, 8) == "special:"
+      and workspace.name ~= PARKED then
     pinned[window.address] = nil
     save()
     sync()
