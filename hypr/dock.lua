@@ -553,8 +553,14 @@ local dock_keys = {
   { "SUPER + SHIFT + LEFT", "Swap window to the left", hl.dsp.window.swap({ direction = "l" }), function() move("l") end },
   { "SUPER + SHIFT + RIGHT", "Swap window to the right", hl.dsp.window.swap({ direction = "r" }), function() move("r") end },
 }
-for _, step in ipairs({ { "", "", 100 }, { "ALT + ", " a little", 25 }, { "CTRL + ", " a lot", 300 } }) do
-  local mods, how, dx = step[1], step[2], step[3]
+-- Spelled exactly as Omarchy binds them (default/hypr/bindings/tiling.lua):
+-- unbinding goes by the spelling, modifier order included.
+for _, step in ipairs({
+  { "", "SHIFT + ", "", 100 },
+  { "ALT + ", "SHIFT + ALT + ", " a little", 25 },
+  { "CTRL + ", "CTRL + SHIFT + ", " a lot", 300 },
+}) do
+  local mods, height_mods, how, dx = step[1], step[2], step[3], step[4]
   dock_keys[#dock_keys + 1] = { "SUPER + " .. mods .. "code:20", "Expand window left" .. how,
     hl.dsp.window.resize({ x = -dx, y = 0, relative = true }), function() resize(-dx) end }
   dock_keys[#dock_keys + 1] = { "SUPER + " .. mods .. "code:21", "Shrink window left" .. how,
@@ -562,9 +568,9 @@ for _, step in ipairs({ { "", "", 100 }, { "ALT + ", " a little", 25 }, { "CTRL 
   -- With SHIFT, Omarchy's keys change the height: a pinned window always fills
   -- the height below the bar (as its strip does), so they keep it there rather
   -- than let it grow past the screen.
-  dock_keys[#dock_keys + 1] = { "SUPER + SHIFT + " .. mods .. "code:20", "Shrink window up" .. how,
+  dock_keys[#dock_keys + 1] = { "SUPER + " .. height_mods .. "code:20", "Shrink window up" .. how,
     hl.dsp.window.resize({ x = 0, y = -dx, relative = true }), function() keep_height() end }
-  dock_keys[#dock_keys + 1] = { "SUPER + SHIFT + " .. mods .. "code:21", "Expand window down" .. how,
+  dock_keys[#dock_keys + 1] = { "SUPER + " .. height_mods .. "code:21", "Expand window down" .. how,
     hl.dsp.window.resize({ x = 0, y = dx, relative = true }), function() keep_height() end }
 end
 local keys_taken = false
