@@ -62,6 +62,7 @@ return {
   pin = "SUPER + ALT + P", -- false leaves it unbound
   width = 0.3,             -- width for a tiled window being pinned, as a share of the screen (0.1-0.8)
   border = "cyan",         -- pinned windows' border: a theme colour name ("cyan", "green", ...), "#8cbfb8", "none", or false for the usual one
+  border_opacity = 1,      -- 0 (clear) to 1 (solid) when focused; unfocused is two thirds of it
 }
 ```
 

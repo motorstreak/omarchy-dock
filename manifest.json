@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "dock",
   "name": "Dock",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "author": "Navin Samuel",
   "description": "Pin any window to the left or right screen edge on every workspace, with tiled windows laid out beside it instead of under it.",
   "kinds": [

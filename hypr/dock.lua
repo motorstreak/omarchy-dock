@@ -80,6 +80,7 @@ local defaults = {
   -- ("cyan", "green", "foreground", ...), a colour such as "#8cbfb8", or false
   -- for the usual border.
   border = "cyan",
+  border_opacity = 1, -- 0 (clear) to 1 (solid), focused; unfocused is two thirds of it
 }
 
 local config = {}
@@ -109,6 +110,10 @@ do
     end
   elseif load_err and not load_err:find("No such file", 1, true) then
     problems[#problems + 1] = load_err
+  end
+  if config.border_opacity < 0 or config.border_opacity > 1 then
+    problems[#problems + 1] = "border_opacity must be between 0 and 1"
+    config.border_opacity = 1
   end
   if config.width < 0.1 or config.width > 0.8 then
     problems[#problems + 1] = "width must be between 0.1 and 0.8"
@@ -193,7 +198,10 @@ if config.border and not no_border then
     end
   end
   if hex then
-    pinned_border = { "rgba(" .. hex .. "ff)", "rgba(" .. hex .. "aa)" }
+    local function alpha(share)
+      return string.format("%02x", math.floor(config.border_opacity * share * 255 + 0.5))
+    end
+    pinned_border = { "rgba(" .. hex .. alpha(1) .. ")", "rgba(" .. hex .. alpha(2 / 3) .. ")" }
   end
 end
 
