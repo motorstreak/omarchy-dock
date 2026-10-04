@@ -11,7 +11,8 @@
 --   SUPER + SHIFT + LEFT/RIGHT  (a pinned window focused) move it to that edge;
 --                    if a window is pinned there, the two swap edges
 --   SUPER + MINUS/EQUAL  (a pinned window focused) move its inner edge left /
---                    right, as between tiled windows (ALT: a little, CTRL: a lot)
+--                    right, as between tiled windows (ALT: a little, CTRL: a lot);
+--                    with SHIFT (height) it stays at full height
 --
 -- Any window can be pinned, sidebars from the Sidebar plugin included: pinning
 -- one moves it out of its sidebar workspace first, which makes it an ordinary
@@ -537,6 +538,15 @@ local function resize(dx)
   place_with_strip(window)
 end
 
+-- A pinned window's height keys: it stays at full height, in place.
+local function keep_height()
+  local window = hl.get_active_window()
+  local p = window and pinned[window.address]
+  if p then
+    place(window, p)
+  end
+end
+
 -- Omarchy's keys a pinned window uses while it has focus: { keys, Omarchy's
 -- description, Omarchy's action, ours }.
 local dock_keys = {
@@ -549,6 +559,13 @@ for _, step in ipairs({ { "", "", 100 }, { "ALT + ", " a little", 25 }, { "CTRL 
     hl.dsp.window.resize({ x = -dx, y = 0, relative = true }), function() resize(-dx) end }
   dock_keys[#dock_keys + 1] = { "SUPER + " .. mods .. "code:21", "Shrink window left" .. how,
     hl.dsp.window.resize({ x = dx, y = 0, relative = true }), function() resize(dx) end }
+  -- With SHIFT, Omarchy's keys change the height: a pinned window always fills
+  -- the height below the bar (as its strip does), so they keep it there rather
+  -- than let it grow past the screen.
+  dock_keys[#dock_keys + 1] = { "SUPER + SHIFT + " .. mods .. "code:20", "Shrink window up" .. how,
+    hl.dsp.window.resize({ x = 0, y = -dx, relative = true }), function() keep_height() end }
+  dock_keys[#dock_keys + 1] = { "SUPER + SHIFT + " .. mods .. "code:21", "Expand window down" .. how,
+    hl.dsp.window.resize({ x = 0, y = dx, relative = true }), function() keep_height() end }
 end
 local keys_taken = false
 
