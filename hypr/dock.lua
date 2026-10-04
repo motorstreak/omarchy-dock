@@ -289,6 +289,19 @@ local function place(window, p)
   local x = p.edge == "left" and (m.x + left + b) or (m.x + mw - right - b - p.width)
   dispatch_for(window, hl.dsp.window.resize, { x = math.floor(p.width), y = math.floor(height) })
   dispatch_for(window, hl.dsp.window.move, { x = math.floor(x), y = math.floor(y) })
+  dispatch_for(window, hl.dsp.window.alter_zorder, { mode = "bottom" })
+end
+
+-- Pinned windows stay under other floating windows (a window popped out with
+-- SUPER + O is pinned too, and placing, pinning or focusing one of these raises
+-- it). Still above tiled windows, being floating.
+local function lower_all()
+  for address in pairs(pinned) do
+    local window = current(address)
+    if window and window.pinned then
+      dispatch_for(window, hl.dsp.window.alter_zorder, { mode = "bottom" })
+    end
+  end
 end
 
 -- Strips -----------------------------------------------------------------------------
@@ -693,7 +706,11 @@ sync()
 
 -- Events ---------------------------------------------------------------------------------
 
-hl.on("window.active", guard("focus change", sync_keys_soon))
+hl.on("window.active", guard("focus change", function()
+  sync_keys_soon()
+  -- After the focus change has raised whatever it raises.
+  hl.timer(guard("lowering pinned windows", lower_all), { timeout = 5, type = "oneshot" })
+end))
 
 hl.on("window.open", guard("hiding pinned windows", function(window)
   if window and window.class == SCREENSAVER then
