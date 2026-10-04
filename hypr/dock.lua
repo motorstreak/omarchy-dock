@@ -445,6 +445,9 @@ local function pin_here(window, edge, width)
   if not window.pinned then
     dispatch_for(window, hl.dsp.window.pin, {})
   end
+  -- A window popped out with SUPER + O is the dock's now: drop Omarchy's "pop"
+  -- tag, or its pop-out look (rounded corners) outlives the pin.
+  dispatch_for(window, hl.dsp.window.tag, { tag = "-pop" })
   style(window)
   -- Placed once floating has settled, or Hyprland restores the window's old
   -- floating geometry over ours.
