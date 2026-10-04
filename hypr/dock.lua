@@ -673,6 +673,8 @@ local function park()
   end
 end
 
+local after_unpark = function() end
+
 local function unpark()
   for address, p in pairs(pinned) do
     local window = current(address)
@@ -690,7 +692,52 @@ local function unpark()
       end
     end
   end
+  after_unpark()
 end
+
+-- Under sidebars and the scratchpad -----------------------------------------------------
+
+-- A shown special workspace (a sidebar, the scratchpad) is drawn over the
+-- workspace, but pinned windows are drawn over both, and miss its dim. So while
+-- one shows on a monitor, the pinned windows there are unpinned where they are
+-- (ordinary floating windows, under it and dimmed with the rest), and pinned
+-- again when it's gone: brought to the workspace on screen first, in case it
+-- changed meanwhile. Only windows unpinned here are pinned again.
+local submerged = {}
+
+local function workspace_target(name)
+  return tonumber(name) and name or ("name:" .. name)
+end
+
+local function sync_specials()
+  for _, m in ipairs(hl.get_monitors()) do
+    local special = m.active_special_workspace
+    local covered = special ~= nil and special.name ~= PARKED
+    for address, p in pairs(pinned) do
+      local window = current(address)
+      if p.monitor == m.name and window and window.workspace and window.workspace.name ~= PARKED then
+        if covered and window.pinned then
+          dispatch_for(window, hl.dsp.window.pin, {})
+          submerged[address] = true
+        elseif not covered and submerged[address] then
+          submerged[address] = nil
+          local regular = m.active_workspace
+          if regular and window.workspace.name ~= regular.name then
+            dispatch_for(window, hl.dsp.window.move, { workspace = workspace_target(regular.name), follow = false })
+          end
+          local now = current(address) or window
+          if not now.pinned then
+            dispatch_for(now, hl.dsp.window.pin, {})
+          end
+          dispatch_for(now, hl.dsp.window.alter_zorder, { mode = "bottom" })
+        end
+      end
+    end
+  end
+end
+
+-- Back from the screensaver under a sidebar still shown: under it again.
+after_unpark = sync_specials
 
 -- Loading ------------------------------------------------------------------------------
 
@@ -699,11 +746,14 @@ do
   local changed = false
   for address in pairs(pinned) do
     local window = current(address)
-    -- (A parked one isn't pinned meanwhile; see Screensaver.)
-    local parked = window and window.workspace and window.workspace.name == PARKED
-    if window == nil or not (window.pinned or parked) then
+    local ws = window and window.workspace and window.workspace.name or ""
+    -- Unpinned meanwhile: parked for the screensaver, or under a sidebar or the
+    -- scratchpad (on a regular workspace; see above), which it's taken back from.
+    if window == nil or (not window.pinned and ws ~= PARKED and ws:sub(1, 8) == "special:") then
       pinned[address] = nil
       changed = true
+    elseif not window.pinned and ws ~= PARKED then
+      submerged[address] = true
     end
   end
   if changed then
@@ -754,6 +804,7 @@ do
   end
 end
 sync()
+sync_specials()
 
 -- Events ---------------------------------------------------------------------------------
 
@@ -762,6 +813,8 @@ hl.on("window.active", guard("focus change", function()
   -- After the focus change has raised whatever it raises.
   hl.timer(guard("lowering pinned windows", lower_all), { timeout = 1, type = "oneshot" })
 end))
+
+hl.on("workspace.special_active", guard("pinned windows under special workspaces", sync_specials))
 
 hl.on("window.open", guard("hiding pinned windows", function(window)
   if window and window.class == SCREENSAVER then
