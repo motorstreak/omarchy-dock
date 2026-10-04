@@ -58,6 +58,13 @@ they were and the key goes away.
   has focus and hands them back after. Together with the
   Sidebar plugin (which takes them while a sidebar has focus), each gets them
   in turn.
+- On a workspace in Omarchy's scrolling layout (`Super + L`), the columns on
+  screen are fitted to the space whenever pinning, unpinning or resizing changes
+  it, so they stay the usual gap from the pinned windows. (Scrolling columns are
+  a share of the screen each and never fill it exactly, so the leftover could
+  otherwise end up beside the pinned windows.) Fitting acts on the focused
+  column, so focus visits one of them and comes straight back; the pointer
+  doesn't move.
 - Pinned windows are Hyprland's own pinned windows (as with `Super + O`), so
   they float above tiled ones; the reserved strip is what keeps the two apart.
   Floating and fullscreen windows can still go over it.
