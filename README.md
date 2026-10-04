@@ -37,6 +37,15 @@ they were and the key goes away.
   screen (see `width` below). It always takes the full height below the bar.
 - Unpinning puts the window back the way it was: floating where it is, or tiled
   into the workspace on screen.
+- Apps are remembered: close a pinned app and it's pinned again, on the same
+  edge and at the same width, the next time it opens, also after logging out.
+  The width is kept as a share of the screen, so it fits another monitor or
+  resolution in proportion. Only the app's first window is pinned (a second one
+  opens as usual), and only if that edge is free. Unpinning an app with
+  `Super + Alt + P` forgets it.
+- Plain terminals aren't remembered, since every program run in one shares its
+  app id. A terminal program started with `omarchy-launch-tui <program>` (as
+  Omarchy's own keys do) has its own, `org.omarchy.<program>`, and is.
 - Works with sidebars from the [Sidebar](https://github.com/motorstreak/omarchy-sidebar)
   plugin: pinning one turns it into an ordinary window, pinned. To make it a
   sidebar again, unpin it and press `Super + Alt + B`.
@@ -63,8 +72,9 @@ return {
   width = 0.3,             -- width for a tiled window being pinned, as a share of the screen (0.1-0.8)
   border = "cyan",         -- pinned windows' border: a theme colour name ("cyan", "green", ...), "#8cbfb8", "none", or false for the usual one
   border_opacity = 1,      -- 0 (clear) to 1 (solid) when focused; unfocused is two thirds of it
+  remember = true,         -- pin apps again when they open, where they were pinned when they closed
 }
 ```
 
 Which windows are pinned is kept in `~/.local/state/omarchy-dock/`, so they stay
-pinned across Hyprland reloads.
+pinned across Hyprland reloads; remembered apps are in `remembered` there.

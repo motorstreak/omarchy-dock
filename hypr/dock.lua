@@ -14,9 +14,10 @@
 --                    right, as between tiled windows (ALT: a little, CTRL: a lot);
 --                    with SHIFT (height) it stays at full height
 --
--- Each app pinned is remembered, its edge and width: when it next opens (its
--- first window, on a regular workspace), it's pinned there again. Unpinning it
--- with SUPER + ALT + P forgets it.
+-- Each app pinned is remembered, its edge and width (a share of the screen):
+-- when it next opens (its first window, on a regular workspace), it's pinned
+-- there again. Unpinning it with SUPER + ALT + P forgets it. Plain terminals
+-- aren't remembered (all their programs share one app id).
 --
 -- Any window can be pinned, sidebars from the Sidebar plugin included: pinning
 -- one moves it out of its sidebar workspace first, which makes it an ordinary
@@ -158,9 +159,18 @@ local remembered_file = state_root .. "/remembered"
 
 -- An app's name for this: its window class, without the Chromium profile of a
 -- web app ("chrome-app.example.com__-Profile_1"), which can differ per launch.
+--
+-- Not plain terminals: every program run in one shares its class, so the next
+-- terminal opened, whatever it runs, would be pinned. A terminal program with an
+-- app id of its own (omarchy-launch-tui gives "org.omarchy.<name>") is its own app.
+local TERMINALS = {
+  ["com.mitchellh.ghostty"] = true, ["Alacritty"] = true, ["kitty"] = true, ["foot"] = true,
+  ["org.wezfurlong.wezterm"] = true,
+}
+
 local function app_of(window)
   local class = window and window.class or ""
-  if class == "" then
+  if class == "" or TERMINALS[class] then
     return nil
   end
   return (class:gsub("^(chrome%-.+)%-Default$", "%1"):gsub("^(chrome%-.+)%-Profile_%d+$", "%1"))
@@ -171,7 +181,7 @@ do
   if f then
     for line in f:lines() do
       local edge, share, app = line:match("^(%a+) ([%d.]+) (.+)$")
-      if (edge == "left" or edge == "right") and tonumber(share) then
+      if (edge == "left" or edge == "right") and tonumber(share) and not TERMINALS[app] then
         remembered[app] = { edge = edge, share = tonumber(share) }
       end
     end
