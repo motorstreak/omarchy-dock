@@ -338,7 +338,26 @@ end
 -- beside it start moving in the same frame instead of one after the other.
 -- Checks every 2 ms; after about 200 ms (something else reserving space on that
 -- edge, say) it places the window anyway.
-local function place_with_strip(window)
+local place_with_strip
+
+-- An app can refuse to be narrower than its own minimum: the window then
+-- keeps a larger width than asked, placed for the smaller one, and hangs off
+-- the screen. So, once the app has answered a placement, a wider window's
+-- width becomes its pinned width and it's placed again. (It only grows, so
+-- this settles at once.)
+local function adopt_width(address)
+  hl.timer(guard("checking the pinned window's width", function()
+    local now, p = current(address), pinned[address]
+    if now and p and now.size and now.size.x > p.width + 1 then
+      p.width = math.floor(now.size.x)
+      save()
+      sync()
+      place_with_strip(now)
+    end
+  end), { timeout = 150, type = "oneshot" })
+end
+
+place_with_strip = function(window)
   local address = window.address
   local tries = 0
   local function check()
@@ -352,6 +371,7 @@ local function place_with_strip(window)
     tries = tries + 1
     if (reserved and math.abs(reserved - strip_size(p)) < 1) or tries > 100 then
       place(now, p)
+      adopt_width(address)
     else
       hl.timer(guard("placing the pinned window", check), { timeout = 2, type = "oneshot" })
     end
@@ -429,6 +449,7 @@ local function pin_here(window, edge, width)
     local now = current(address)
     if now and pinned[address] then
       place(now, pinned[address])
+      adopt_width(address)
     end
   end), { timeout = 50, type = "oneshot" })
   sync()
