@@ -458,6 +458,88 @@ local function lower_all()
   end
 end
 
+-- Scrolling workspaces -----------------------------------------------------------------
+
+-- Omarchy's scrolling layout makes each column a share of the space (0.49), so
+-- columns never fill it exactly, and when a strip changes the space Hyprland
+-- lines the row up again: the leftover can land beside the pinned windows, so
+-- the gap there grows. So once a strip has changed, the columns on screen of a
+-- scrolling workspace are fitted to the space ("fit visible"), as tiled windows
+-- in the other layout fill it. That acts on the focused column: focus goes to
+-- one of them and straight back, with the pointer left where it is.
+local function fit_scrolling(name)
+  local m = monitor_named(name)
+  local ws = m and m.active_workspace
+  if ws == nil or ws.tiled_layout ~= "scrolling" or m.active_special_workspace or ws.has_fullscreen then
+    return
+  end
+  local mw = logical_size(m)
+  local column = nil
+  for _, w in ipairs(hl.get_windows()) do
+    if not w.floating and w.workspace and w.workspace.name == ws.name
+        and w.at.x + w.size.x > m.x and w.at.x < m.x + mw then
+      column = w
+      break
+    end
+  end
+  if column == nil then
+    return
+  end
+  local before = hl.get_active_window()
+  local no_warps = hl.get_config("cursor:no_warps")
+  hl.config({ cursor = { no_warps = true } })
+  if before == nil or before.address ~= column.address then
+    hl.dispatch(hl.dsp.focus({ window = selector(column) }))
+  end
+  hl.dispatch(hl.dsp.layout("fit visible"))
+  if before and before.address ~= column.address then
+    hl.dispatch(hl.dsp.focus({ window = selector(before) }))
+  end
+  hl.config({ cursor = { no_warps = no_warps == true } })
+end
+
+local function reserved_sides(m)
+  local r = m.reserved or {}
+  return (r.left or 0) .. " " .. (r.right or 0)
+end
+
+-- After the strips were sent: once a monitor's reserved space has changed (the
+-- shell takes a few tens of milliseconds; checked every 2 ms, for up to 200 ms)
+-- and the tiled windows have been laid out in it, its scrolling columns fitted.
+local fit_watch = nil
+
+local function fit_when_strips_land()
+  if fit_watch then
+    return
+  end
+  local before = {}
+  for _, m in ipairs(hl.get_monitors()) do
+    before[m.name] = reserved_sides(m)
+  end
+  fit_watch = { before = before, tries = 0 }
+  local function check()
+    local watch = fit_watch
+    watch.tries = watch.tries + 1
+    local changed = {}
+    for _, m in ipairs(hl.get_monitors()) do
+      if watch.before[m.name] ~= reserved_sides(m) then
+        changed[#changed + 1] = m.name
+      end
+    end
+    if #changed > 0 or watch.tries > 100 then
+      fit_watch = nil
+      hl.timer(guard("fitting scrolling columns", function()
+        for _, name in ipairs(changed) do
+          fit_scrolling(name)
+        end
+      end), { timeout = 20, type = "oneshot" })
+    else
+      hl.timer(guard("fitting scrolling columns", check), { timeout = 2, type = "oneshot" })
+    end
+  end
+  hl.timer(guard("fitting scrolling columns", check), { timeout = 2, type = "oneshot" })
+end
+
 -- Strips -----------------------------------------------------------------------------
 
 -- Service.qml draws a strip for each pinned window, ending at its border on
@@ -489,6 +571,7 @@ local function sync()
     strips[#strips + 1] = string.format('{"monitor":"%s","edge":"%s","size":%d}',
       st.monitor:gsub('[%c"\\]', ""), st.edge, st.size)
   end
+  fit_when_strips_land()
   seq = seq + 1
   hl.exec_cmd("omarchy-shell -q omarchy-dock set " .. quote(string.format('{"session":"%s","seq":%d,"strips":[%s]}',
     session, seq, table.concat(strips, ","))))
