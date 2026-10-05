@@ -69,6 +69,10 @@ they were and the key goes away.
   otherwise end up beside the pinned windows.) Fitting acts on the focused
   column, so focus visits one of them and comes straight back; the pointer
   doesn't move.
+- A window in full screen (`Super + F`) hides the pinned windows on its
+  monitor; they come back when it leaves full screen, closes, or you switch to
+  another workspace. Full width (`Super + Alt + F`) leaves them be: it keeps
+  their space. Sidebars and the scratchpad hide them the same way.
 - Pinned windows are Hyprland's own pinned windows (as with `Super + O`), so
   they float above tiled ones; the reserved strip is what keeps the two apart.
   Floating and fullscreen windows can still go over it.
