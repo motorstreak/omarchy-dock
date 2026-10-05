@@ -994,14 +994,17 @@ local function unpark()
   after_unpark()
 end
 
--- Under sidebars and the scratchpad -----------------------------------------------------
+-- Under sidebars, the scratchpad and fullscreen windows ------------------------------------
 
 -- A shown special workspace (a sidebar, the scratchpad) is drawn over the
--- workspace, but pinned windows are drawn over both, and miss its dim. So while
--- one shows on a monitor, the pinned windows there are unpinned where they are
--- (ordinary floating windows, under it and dimmed with the rest), and pinned
+-- workspace, but pinned windows are drawn over both, and miss its dim; and they
+-- stay on top of a fullscreen window too. So while one shows on a monitor, or
+-- its workspace has a window in full screen (SUPER + F, not the full width of
+-- SUPER + ALT + F, which leaves them room), the pinned windows there are
+-- unpinned where they are (ordinary floating windows, under it), and pinned
 -- again when it's gone: brought to the workspace on screen first, in case it
--- changed meanwhile. Only windows unpinned here are pinned again.
+-- changed meanwhile, and placed again. Only windows unpinned here are pinned
+-- again. A pinned window put in full screen itself is left be.
 local submerged = {}
 
 local function workspace_target(name)
@@ -1011,10 +1014,12 @@ end
 local function sync_specials()
   for _, m in ipairs(hl.get_monitors()) do
     local special = m.active_special_workspace
-    local covered = special ~= nil and special.name ~= PARKED
+    local ws = m.active_workspace
+    local covered = (special ~= nil and special.name ~= PARKED) or (ws ~= nil and ws.fullscreen_mode == 2)
     for address, p in pairs(pinned) do
       local window = current(address)
-      if p.monitor == m.name and window and window.workspace and window.workspace.name ~= PARKED then
+      if p.monitor == m.name and window and window.workspace and window.workspace.name ~= PARKED
+          and window.fullscreen ~= 2 then
         if covered and window.pinned then
           dispatch_for(window, hl.dsp.window.pin, {})
           submerged[address] = true
@@ -1028,7 +1033,7 @@ local function sync_specials()
           if not now.pinned then
             dispatch_for(now, hl.dsp.window.pin, {})
           end
-          dispatch_for(now, hl.dsp.window.alter_zorder, { mode = "bottom" })
+          place_with_strip(now)
         end
       end
     end
@@ -1037,6 +1042,12 @@ end
 
 -- Back from the screensaver under a sidebar still shown: under it again.
 after_unpark = sync_specials
+
+-- Once Hyprland has finished what set it off (a window going full screen, a
+-- workspace switch).
+local function sync_specials_soon()
+  hl.timer(guard("pinned windows under full screen windows", sync_specials), { timeout = 10, type = "oneshot" })
+end
 
 -- Loading ------------------------------------------------------------------------------
 
@@ -1209,6 +1220,8 @@ hl.on("window.active", guard("focus change", function()
 end))
 
 hl.on("workspace.special_active", guard("pinned windows under special workspaces", sync_specials))
+hl.on("window.fullscreen", guard("pinned windows under full screen windows", sync_specials_soon))
+hl.on("workspace.active", guard("pinned windows under full screen windows", sync_specials_soon))
 
 -- An app remembered opens: its first window is pinned where the app was (into
 -- the stack on that edge, at its old height in it), once Hyprland has placed it,
@@ -1263,6 +1276,8 @@ hl.on("window.close", guard("closing a window", function(window)
     sync()
     place_stack(p.monitor, p.edge)
   end
+  -- A full screen window closing: the pinned windows come back.
+  sync_specials_soon()
 end))
 
 -- A pinned window can't be moved to another workspace while pinned; if it gets
@@ -1278,6 +1293,8 @@ hl.on("window.move_to_workspace", guard("moving a window", function(window, work
     sync()
     place_stack(p.monitor, p.edge)
   end
+  -- A full screen window moved off the workspace on screen: they come back.
+  sync_specials_soon()
 end))
 
 -- Keys -----------------------------------------------------------------------------------
