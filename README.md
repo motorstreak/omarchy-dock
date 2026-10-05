@@ -39,6 +39,10 @@ they were and the key goes away.
 - A window that was floating keeps its width; a tiled one gets 30% of the
   screen (see `width` below). It always takes the full height below the bar
   (shared, in a stack).
+- Pinned windows follow the monitor: when its resolution or scale changes, or
+  the bar appears or goes, they're placed again to fit, keeping their width as a
+  share of the screen. If their monitor is unplugged, they stay pinned to the
+  same edge on the monitor Hyprland moves them to.
 - Unpinning puts the window back the way it was: floating where it is, or tiled
   into the workspace on screen.
 - Apps are remembered: close a pinned app and it's pinned again, on the same
