@@ -4,6 +4,7 @@
 -- height on every workspace, and that strip of the screen is reserved, so tiled
 -- windows are laid out beside it instead of under it. Several windows on one
 -- edge stack, sharing its height (and one width).
+-- They follow a monitor's resolution or scale changing.
 --
 --   SUPER + ALT + P  pin the focused window to the screen edge it's nearer to,
 --                    or unpin a pinned one (it goes back to floating or tiled,
@@ -1097,7 +1098,82 @@ end
 sync()
 sync_specials()
 
+-- Monitors -------------------------------------------------------------------------------
+
+-- A monitor's resolution or scale changing, or one being plugged in or out:
+-- pinned windows are placed again for the new size (their height follows it),
+-- and keep their width as a share of the screen. A window whose monitor is gone
+-- stays pinned, to the same edge, on the monitor Hyprland moved it to.
+local monitor_widths = {}
+
+local function note_monitor_widths()
+  monitor_widths = {}
+  for _, m in ipairs(hl.get_monitors()) do
+    if (m.width or 0) > 0 and (m.height or 0) > 0 then
+      monitor_widths[m.name] = logical_size(m)
+    end
+  end
+end
+
+local function monitors_changed()
+  local old = monitor_widths
+  note_monitor_widths()
+  local stacks = {}
+  for address, p in pairs(pinned) do
+    local window = current(address)
+    if window then
+      local was = old[p.monitor]
+      if monitor_widths[p.monitor] == nil and window.monitor and monitor_widths[window.monitor.name] then
+        p.monitor = window.monitor.name
+      end
+      local now = monitor_widths[p.monitor]
+      if now then
+        if was and was ~= now then
+          p.width = math.floor(p.width * now / was + 0.5)
+        end
+        p.width = math.floor(math.min(math.max(p.width, 300), now * 0.6))
+        stacks[p.monitor .. " " .. p.edge] = { p.monitor, p.edge }
+      end
+    end
+  end
+  -- A stack shares one width (a window moved here from a monitor that's gone
+  -- joins a stack that may have another).
+  for _, st in pairs(stacks) do
+    local list = stack(st[1], st[2])
+    for _, e in ipairs(list) do
+      e.p.width = list[1].p.width
+    end
+  end
+  save()
+  sync()
+  -- Parked for the screensaver: placed when it ends.
+  if screensavers() == 0 then
+    for _, st in pairs(stacks) do
+      place_stack(st[1], st[2])
+    end
+  end
+end
+
+note_monitor_widths()
+
+local monitors_pending = false
+
+local function monitors_changed_soon()
+  if monitors_pending then
+    return
+  end
+  monitors_pending = true
+  hl.timer(guard("following a monitor change", function()
+    monitors_pending = false
+    monitors_changed()
+  end), { timeout = 100, type = "oneshot" })
+end
+
 -- Events ---------------------------------------------------------------------------------
+
+hl.on("monitor.layout_changed", guard("following a monitor change", monitors_changed_soon))
+hl.on("monitor.added", guard("following a monitor change", monitors_changed_soon))
+hl.on("monitor.removed", guard("following a monitor change", monitors_changed_soon))
 
 hl.on("window.active", guard("focus change", function()
   sync_keys_soon()
