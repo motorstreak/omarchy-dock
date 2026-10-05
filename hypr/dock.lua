@@ -134,7 +134,9 @@ end
 
 -- Pinned windows ------------------------------------------------------------------
 
--- By address: { edge = "left"|"right", monitor = name, width, was_floating, pos }.
+-- By address: { edge = "left"|"right", monitor = name, width, was_floating, pos, mw }.
+-- mw is the monitor's width the window's width was set for: a different one
+-- (another resolution or scale, also across a reload) scales the width to match.
 -- pos orders a stack, top to bottom: the middle of the window's slot as a share
 -- of the screen's height.
 -- Kept in a file too, as a Hyprland reload runs this file afresh while the
@@ -146,10 +148,10 @@ do
   local f = io.open(pinned_file, "r")
   if f then
     for line in f:lines() do
-      local address, edge, monitor, width, floated, pos = line:match("^(%S+) (%a+) (%S+) (%d+) ([01]) ?([%d.]*)$")
+      local address, edge, monitor, width, floated, pos, mw = line:match("^(%S+) (%a+) (%S+) (%d+) ([01]) ?([%d.]*) ?(%d*)$")
       if address and (edge == "left" or edge == "right") then
         pinned[address] = { edge = edge, monitor = monitor, width = tonumber(width), was_floating = floated == "1",
-          pos = tonumber(pos) or 0.5 }
+          pos = tonumber(pos) or 0.5, mw = tonumber(mw) }
       end
     end
     f:close()
@@ -220,7 +222,8 @@ local function save()
   local f = io.open(pinned_file, "w")
   if f then
     for address, p in pairs(pinned) do
-      f:write(string.format("%s %s %s %d %d %.4f\n", address, p.edge, p.monitor, p.width, p.was_floating and 1 or 0, p.pos))
+      f:write(string.format("%s %s %s %d %d %.4f %d\n", address, p.edge, p.monitor, p.width, p.was_floating and 1 or 0, p.pos,
+        p.mw or 0))
     end
     f:close()
   end
@@ -717,7 +720,8 @@ local function pin_here(window, edge, width, pos)
     width = others[1].p.width
   end
 
-  local p = { edge = edge, monitor = m.name, width = width, was_floating = window.floating == true, pos = pos }
+  local p = { edge = edge, monitor = m.name, width = width, was_floating = window.floating == true, pos = pos,
+    mw = math.floor(logical_size(m)) }
   pinned[window.address] = p
   save()
 
@@ -1036,6 +1040,9 @@ after_unpark = sync_specials
 
 -- Loading ------------------------------------------------------------------------------
 
+-- Defined below (Monitors).
+local monitors_changed
+
 -- Pinned windows that closed or were unpinned while this wasn't loaded.
 do
   for address in pairs(pinned) do
@@ -1066,12 +1073,8 @@ do
     if screensavers() == 0 then
       unpark()
     end
-    for address in pairs(pinned) do
-      local window = current(address)
-      if window then
-        place_with_strip(window)
-      end
-    end
+    -- (Also scales widths for a monitor that changed meanwhile.)
+    monitors_changed()
   end), { timeout = 300, type = "oneshot" })
   local f = io.open(restored_file, "r")
   local keep = {}
@@ -1103,34 +1106,44 @@ sync_specials()
 -- A monitor's resolution or scale changing, or one being plugged in or out:
 -- pinned windows are placed again for the new size (their height follows it),
 -- and keep their width as a share of the screen. A window whose monitor is gone
--- stays pinned, to the same edge, on the monitor Hyprland moved it to.
-local monitor_widths = {}
+-- stays pinned, to the same edge, on the monitor Hyprland moved it to. The same
+-- when the space reserved above or below changes (the bar coming back after a
+-- reload, say): they fit below the bar again.
 
-local function note_monitor_widths()
-  monitor_widths = {}
+-- Each monitor's size, scale and space reserved above and below, as last placed for.
+local monitor_state = {}
+
+local function monitor_states()
+  local states = {}
   for _, m in ipairs(hl.get_monitors()) do
-    if (m.width or 0) > 0 and (m.height or 0) > 0 then
-      monitor_widths[m.name] = logical_size(m)
-    end
+    local r = m.reserved or {}
+    states[m.name] = string.format("%d %d %s %d %d", m.width or 0, m.height or 0, tostring(m.scale),
+      r.top or 0, r.bottom or 0)
   end
+  return states
 end
 
-local function monitors_changed()
-  local old = monitor_widths
-  note_monitor_widths()
+monitors_changed = function()
+  monitor_state = monitor_states()
+  local widths = {}
+  for _, m in ipairs(hl.get_monitors()) do
+    if (m.width or 0) > 0 and (m.height or 0) > 0 then
+      widths[m.name] = math.floor(logical_size(m))
+    end
+  end
   local stacks = {}
   for address, p in pairs(pinned) do
     local window = current(address)
     if window then
-      local was = old[p.monitor]
-      if monitor_widths[p.monitor] == nil and window.monitor and monitor_widths[window.monitor.name] then
+      if widths[p.monitor] == nil and window.monitor and widths[window.monitor.name] then
         p.monitor = window.monitor.name
       end
-      local now = monitor_widths[p.monitor]
+      local now = widths[p.monitor]
       if now then
-        if was and was ~= now then
-          p.width = math.floor(p.width * now / was + 0.5)
+        if p.mw and p.mw > 0 and p.mw ~= now then
+          p.width = math.floor(p.width * now / p.mw + 0.5)
         end
+        p.mw = now
         p.width = math.floor(math.min(math.max(p.width, 300), now * 0.6))
         stacks[p.monitor .. " " .. p.edge] = { p.monitor, p.edge }
       end
@@ -1154,26 +1167,40 @@ local function monitors_changed()
   end
 end
 
-note_monitor_widths()
-
 local monitors_pending = false
 
-local function monitors_changed_soon()
+-- `check`: only if a monitor's size, scale or space above/below has changed
+-- (layers open and close all the time: menus, notifications).
+local function monitors_changed_soon(check)
   if monitors_pending then
     return
   end
   monitors_pending = true
   hl.timer(guard("following a monitor change", function()
     monitors_pending = false
+    if check then
+      local now = monitor_states()
+      local same = true
+      for name, state in pairs(now) do
+        if monitor_state[name] ~= state then
+          same = false
+        end
+      end
+      if same then
+        return
+      end
+    end
     monitors_changed()
   end), { timeout = 100, type = "oneshot" })
 end
 
 -- Events ---------------------------------------------------------------------------------
 
-hl.on("monitor.layout_changed", guard("following a monitor change", monitors_changed_soon))
-hl.on("monitor.added", guard("following a monitor change", monitors_changed_soon))
-hl.on("monitor.removed", guard("following a monitor change", monitors_changed_soon))
+hl.on("monitor.layout_changed", guard("following a monitor change", function() monitors_changed_soon(false) end))
+hl.on("monitor.added", guard("following a monitor change", function() monitors_changed_soon(false) end))
+hl.on("monitor.removed", guard("following a monitor change", function() monitors_changed_soon(false) end))
+hl.on("layer.opened", guard("following the reserved space", function() monitors_changed_soon(true) end))
+hl.on("layer.closed", guard("following the reserved space", function() monitors_changed_soon(true) end))
 
 hl.on("window.active", guard("focus change", function()
   sync_keys_soon()
