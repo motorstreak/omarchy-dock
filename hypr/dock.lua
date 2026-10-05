@@ -252,7 +252,34 @@ local function selector(window)
   return "address:" .. window.address
 end
 
+-- Hyprland can crash floating, centring, moving or resizing a window while its
+-- monitor is being reconfigured (unplugged, or connected but still 0x0, as when
+-- monitors are switched): so those are skipped unless the window is on a monitor
+-- that's connected and has a size. Other commands (borders, tags) go ahead.
+local GEOMETRY = {
+  [hl.dsp.window.float] = true, [hl.dsp.window.center] = true, [hl.dsp.window.move] = true,
+  [hl.dsp.window.resize] = true, [hl.dsp.window.pin] = true, [hl.dsp.window.alter_zorder] = true,
+}
+
+local function usable_monitor(m)
+  if m == nil or (m.width or 0) <= 0 or (m.height or 0) <= 0 then
+    return false
+  end
+  for _, other in ipairs(hl.get_monitors()) do
+    if other.name == m.name then
+      return true
+    end
+  end
+  return false
+end
+
 local function dispatch_for(window, dsp, args)
+  if GEOMETRY[dsp] then
+    local now = hl.get_window(selector(window))
+    if now == nil or not usable_monitor(now.monitor) then
+      return
+    end
+  end
   args.window = selector(window)
   hl.dispatch(dsp(args))
 end
