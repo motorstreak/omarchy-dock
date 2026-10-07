@@ -92,6 +92,7 @@ return {
   border = "cyan",         -- pinned windows' border: a theme colour name ("cyan", "green", ...), "#8cbfb8", "none", or false for the usual one
   border_opacity = 1,      -- 0 (clear) to 1 (solid) when focused; unfocused is two thirds of it
   remember = true,         -- pin apps again when they open, where they were pinned when they closed
+  notify = true,           -- a short notification on Super + Alt + P: "Docked on the right" / "Undocked"
 }
 ```
 

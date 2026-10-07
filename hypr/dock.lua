@@ -89,6 +89,7 @@ local defaults = {
   border = "cyan",
   border_opacity = 1, -- 0 (clear) to 1 (solid), focused; unfocused is two thirds of it
   remember = true, -- apps pinned when they closed open pinned again, at the same edge and width
+  notify = true, -- a short notification on SUPER + ALT + P: "Docked on the right" / "Undocked"
 }
 
 local config = {}
@@ -749,6 +750,22 @@ end
 -- Defined further down: pinning and unpinning re-check who has the swap keys.
 local sync_keys_soon
 
+-- SUPER + ALT + P says what it did: a docked window that was already floating
+-- doesn't move, and its border colour can be close to the focused one.
+local function announce(text)
+  if config.notify then
+    hl.exec_cmd("omarchy-notification-send --app-name Dock -g 󰐃 -t 1500 " .. quote(text))
+  end
+end
+
+local function announce_pinned(address)
+  local p = pinned[address]
+  if p then
+    local n = #stack(p.monitor, p.edge)
+    announce("Docked on the " .. p.edge .. (n > 1 and (" (" .. n .. " stacked)") or ""))
+  end
+end
+
 -- SUPER + ALT + P on the focused window.
 local function toggle()
   local window = hl.get_active_window()
@@ -759,6 +776,7 @@ local function toggle()
     forget(window)
     unpin(window)
     sync_keys_soon()
+    announce("Undocked")
     return
   end
   local ws = window.workspace and window.workspace.name or ""
@@ -784,12 +802,14 @@ local function toggle()
         pin_here(now, edge, width, pos)
         sync_keys_soon()
         hl.dispatch(hl.dsp.focus({ window = selector(now) }))
+        announce_pinned(now.address)
       end
     end), { timeout = 150, type = "oneshot" })
     return
   end
   pin_here(window)
   sync_keys_soon()
+  announce_pinned(window.address)
 end
 
 -- SUPER + SHIFT + LEFT/RIGHT on a pinned window: to that edge, into the stack
