@@ -1,6 +1,5 @@
 import QtQuick
 import Quickshell
-import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Wayland
 
@@ -46,6 +45,16 @@ Item {
     loader.running = true
   }
 
+  // hyprctl eval's output without Hyprland's warnings (a dispatch that didn't
+  // apply, say), which don't stop dock.lua loading: logged, not reported.
+  function problems(text) {
+    return text.trim().split("\n").filter(function(line) {
+      if (line.indexOf("warning:") !== 0) return line !== "" && line !== "ok"
+      console.warn("dock: " + line)
+      return false
+    }).join("\n")
+  }
+
   function report(message) {
     console.warn("dock: loading into Hyprland failed: " + message)
     Quickshell.execDetached(["notify-send", "-a", "Dock", "--", "Dock failed to load", message])
@@ -64,8 +73,8 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var result = text.trim()
-        if (result === "ok" || result === "") {
+        var result = root.problems(text)
+        if (result === "") {
           root.connectRetries = 0
         } else if (result.indexOf("Couldn't connect") === 0 && root.connectRetries < 5) {
           root.connectRetries += 1
@@ -78,7 +87,8 @@ Item {
     stderr: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        if (text.trim() !== "") root.report(text.trim())
+        var result = root.problems(text)
+        if (result !== "") root.report(result)
       }
     }
     onExited: function() {
@@ -89,15 +99,61 @@ Item {
     }
   }
 
-  Connections {
-    target: Hyprland
-    function onRawEvent(event) {
-      var name = String(event && event.name ? event.name : "")
-      if (name === "configreloaded") root.load()
-      // Hyprland doesn't move other windows while one is fullscreen, so a
-      // pinned window placed meanwhile (after a reload, say) is placed again.
-      else if (name === "fullscreen" && String(event.data) === "0")
-        Quickshell.execDetached(["hyprctl", "eval", "if dock and dock.refresh then dock.refresh() end"])
+  // Hyprland's events, on a connection of the dock's own. The shell's (the
+  // Hyprland module's) is made once and never again if Hyprland closes it
+  // (quickshell #989); after that a reload left the dock unloaded until the
+  // shell restarted. This one is made afresh until it connects again. It loads
+  // on connecting, in case a reload came while it was down or before it first
+  // connected (a plugin update reloads Hyprland while this service is new).
+  function eventsUp() {
+    reconnect.stop()
+    load()
+  }
+
+  function eventsDown() {
+    reconnect.restart()
+  }
+
+  function handleEvent(line) {
+    var split = line.indexOf(">>")
+    var name = split < 0 ? line : line.slice(0, split)
+    if (name === "configreloaded") load()
+    // A window tiled (SUPER + T): dock.lua undocks it if it was pinned.
+    else if (name === "changefloatingmode") {
+      var m = line.slice(split + 2).match(/^([0-9a-f]+),0$/)
+      if (m) Quickshell.execDetached(["hyprctl", "eval", "if dock and dock.tiled then dock.tiled('0x" + m[1] + "') end"])
+    }
+    // Hyprland doesn't move other windows while one is fullscreen, so a pinned
+    // window placed meanwhile (after a reload, say) is placed again.
+    else if (name === "fullscreen" && line.slice(split + 2) === "0")
+      Quickshell.execDetached(["hyprctl", "eval", "if dock and dock.refresh then dock.refresh() end"])
+  }
+
+  LazyLoader {
+    id: events
+    active: true
+
+    Socket {
+      path: Quickshell.env("XDG_RUNTIME_DIR") + "/hypr/" + Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") + "/.socket2.sock"
+      connected: true
+      onConnectionStateChanged: connected ? root.eventsUp() : root.eventsDown()
+      // A socket that connects at once does so before the handler above is
+      // attached, and one that fails never changes state: so check.
+      Component.onCompleted: Qt.callLater(function() { connected ? root.eventsUp() : root.eventsDown() })
+      parser: SplitParser {
+        onRead: function(line) { root.handleEvent(line) }
+      }
+    }
+  }
+
+  // A fresh socket each try: setting `connected` again after a failed try
+  // doesn't try again.
+  Timer {
+    id: reconnect
+    interval: 2000
+    onTriggered: {
+      events.active = false
+      events.active = true
     }
   }
 

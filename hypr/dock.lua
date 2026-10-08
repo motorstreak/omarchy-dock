@@ -87,7 +87,15 @@ local defaults = {
   -- ("cyan", "green", "foreground", ...), a colour such as "#8cbfb8", or false
   -- for the usual border.
   border = "cyan",
-  border_opacity = 1, -- 0 (clear) to 1 (solid), focused; unfocused is two thirds of it
+  border_opacity = 1, -- 0 (clear) to 1 (solid), focused
+  border_unfocused = 2 / 3, -- unfocused, as a share of border_opacity (0: shown only on focus/hover)
+  border_size = 0, -- width in pixels; 0 for the usual width
+  -- A glow (a shadow in the theme's focused-border colour) around the focused
+  -- pinned window only. Used only while Hyprland's shadows are off; otherwise
+  -- pinned windows keep the usual shadow.
+  glow = false,
+  glow_size = 6, -- its reach in pixels
+  glow_opacity = 0.4, -- 0 (clear) to 1 (solid)
   remember = true, -- apps pinned when they closed open pinned again, at the same edge and width
   notify = true, -- a short notification on SUPER + ALT + P: "Docked on the right" / "Undocked"
 }
@@ -123,6 +131,22 @@ do
   if config.border_opacity < 0 or config.border_opacity > 1 then
     problems[#problems + 1] = "border_opacity must be between 0 and 1"
     config.border_opacity = 1
+  end
+  if config.border_unfocused < 0 or config.border_unfocused > 1 then
+    problems[#problems + 1] = "border_unfocused must be between 0 and 1"
+    config.border_unfocused = defaults.border_unfocused
+  end
+  if config.border_size < 0 or config.border_size ~= math.floor(config.border_size) then
+    problems[#problems + 1] = "border_size must be a whole number, 0 or more"
+    config.border_size = defaults.border_size
+  end
+  if config.glow_size < 1 or config.glow_size ~= math.floor(config.glow_size) then
+    problems[#problems + 1] = "glow_size must be a whole number, 1 or more"
+    config.glow_size = defaults.glow_size
+  end
+  if config.glow_opacity < 0 or config.glow_opacity > 1 then
+    problems[#problems + 1] = "glow_opacity must be between 0 and 1"
+    config.glow_opacity = defaults.glow_opacity
   end
   if config.width < 0.1 or config.width > 0.8 then
     problems[#problems + 1] = "width must be between 0.1 and 0.8"
@@ -343,7 +367,7 @@ if config.border and not no_border then
     local function alpha(share)
       return string.format("%02x", math.floor(config.border_opacity * share * 255 + 0.5))
     end
-    pinned_border = { "rgba(" .. hex .. alpha(1) .. ")", "rgba(" .. hex .. alpha(2 / 3) .. ")" }
+    pinned_border = { "rgba(" .. hex .. alpha(1) .. ")", "rgba(" .. hex .. alpha(config.border_unfocused) .. ")" }
   end
 end
 
@@ -368,6 +392,29 @@ local function set_border(window, active, inactive)
   end
 end
 
+-- The glow. Hyprland can only turn a window's shadow off, not on, and shadow
+-- colours are global. So with shadows off, they're turned on with the glow's
+-- colours (none unfocused), off again for every window by a rule, and back on
+-- for pinned windows by a property, which wins over rules. A reload undoes the
+-- config and rule; loading does them again.
+local glowing = false
+if config.glow and not hl.get_config("decoration:shadow:enabled") then
+  local active = theme_border("general:col.active_border")
+  local rgb = active and active:match("^rgba%((%x%x%x%x%x%x)")
+  if rgb then
+    hl.config({ decoration = { shadow = {
+      enabled = true,
+      range = config.glow_size,
+      render_power = 3,
+      offset = { 0, 0 },
+      color = "rgba(" .. rgb .. string.format("%02x", math.floor(config.glow_opacity * 255 + 0.5)) .. ")",
+      color_inactive = "rgba(" .. rgb .. "00)",
+    } } })
+    hl.window_rule({ name = "omarchy-dock-no-shadow", match = { class = ".*" }, no_shadow = true })
+    glowing = true
+  end
+end
+
 -- A border colour can't be handed back to the theme, only set, and it survives
 -- reloads. So windows given the theme's colours on unpinning are remembered and
 -- get the current theme's colours again on every load (a theme change reloads).
@@ -377,17 +424,23 @@ local function style(window)
   if no_border then
     dispatch_for(window, hl.dsp.window.set_prop, { prop = "border_size", value = "0" })
   else
-    -- The usual width (a window pinned with border = "none" had none).
-    dispatch_for(window, hl.dsp.window.set_prop, { prop = "border_size", value = "unset" })
+    -- border_size, or the usual width (a window pinned with border = "none"
+    -- had none).
+    dispatch_for(window, hl.dsp.window.set_prop,
+      { prop = "border_size", value = config.border_size > 0 and tostring(config.border_size) or "unset" })
     if pinned_border then
       set_border(window, pinned_border[1], pinned_border[2])
     end
+  end
+  if glowing then
+    dispatch_for(window, hl.dsp.window.set_prop, { prop = "no_shadow", value = "0" })
   end
 end
 
 local function unstyle(window)
   -- Unlike a colour, a size can be handed back to the config.
   dispatch_for(window, hl.dsp.window.set_prop, { prop = "border_size", value = "unset" })
+  dispatch_for(window, hl.dsp.window.set_prop, { prop = "no_shadow", value = "unset" })
   -- The theme's colours, also after border = "none" (a window pinned with a
   -- coloured border keeps that colour, unseen, until now).
   set_border(window, theme_border("general:col.active_border"), theme_border("general:col.inactive_border"))
@@ -424,6 +477,9 @@ end
 local function border()
   if no_border then
     return 0
+  end
+  if config.border_size > 0 then
+    return config.border_size
   end
   local b = hl.get_config("general:border_size")
   return type(b) == "number" and b or 0
@@ -766,6 +822,21 @@ local function announce_pinned(address)
   end
 end
 
+-- A pinned window tiled by something else (SUPER + T, say): Hyprland unpins it
+-- as it tiles it, without a Lua event, so Service.qml passes on the event
+-- socket's changefloatingmode. Undocked, as with SUPER + ALT + P; left pinned,
+-- its strip stayed and squeezed it to a sliver. (The dock tiles a window only
+-- after forgetting it.)
+local function tiled(address)
+  local window = current(address)
+  if window == nil or pinned[address] == nil or window.floating then
+    return
+  end
+  forget(window)
+  unpin(window)
+  sync_keys_soon()
+end
+
 -- SUPER + ALT + P on the focused window.
 local function toggle()
   local window = hl.get_active_window()
@@ -1081,8 +1152,17 @@ do
     local ws = window and window.workspace and window.workspace.name or ""
     -- Unpinned meanwhile: parked for the screensaver, or under a sidebar or the
     -- scratchpad (on a regular workspace; see above), which it's taken back from.
-    if window == nil or (not window.pinned and ws ~= PARKED and ws:sub(1, 8) == "special:") then
+    -- Those stay floating; a tiled one was taken by something else (the Sidebar
+    -- plugin, Super+T) and isn't docked any more.
+    if window == nil or not window.floating
+      or (not window.pinned and ws ~= PARKED and ws:sub(1, 8) == "special:") then
       pinned[address] = nil
+      -- The border width and shadow back to the config's. (Not the colours:
+      -- whatever took it may have set its own.)
+      if window then
+        dispatch_for(window, hl.dsp.window.set_prop, { prop = "border_size", value = "unset" })
+        dispatch_for(window, hl.dsp.window.set_prop, { prop = "no_shadow", value = "unset" })
+      end
     elseif not window.pinned and ws ~= PARKED then
       submerged[address] = true
     end
@@ -1350,6 +1430,7 @@ dock = {
     end
   end,
   toggle = toggle,
+  tiled = tiled,
   move = move,
   resize = resize,
   release = release,

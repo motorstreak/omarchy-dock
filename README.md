@@ -90,7 +90,12 @@ return {
   pin = "SUPER + ALT + P", -- false leaves it unbound
   width = 0.3,             -- width for a tiled window being pinned, as a share of the screen (0.1-0.8)
   border = "cyan",         -- pinned windows' border: a theme colour name ("cyan", "green", ...), "#8cbfb8", "none", or false for the usual one
-  border_opacity = 1,      -- 0 (clear) to 1 (solid) when focused; unfocused is two thirds of it
+  border_opacity = 1,      -- 0 (clear) to 1 (solid) when focused
+  border_unfocused = 2/3,  -- unfocused, as a share of border_opacity; 0 shows the border only on focus (hover)
+  border_size = 0,         -- border width in pixels; 0 for the usual width
+  glow = false,            -- a glow in the focused-border colour around the focused pinned window (only while Hyprland's shadows are off)
+  glow_size = 6,           -- the glow's reach in pixels
+  glow_opacity = 0.4,      -- 0 (clear) to 1 (solid)
   remember = true,         -- pin apps again when they open, where they were pinned when they closed
   notify = true,           -- a short notification on Super + Alt + P: "Docked on the right" / "Undocked"
 }
