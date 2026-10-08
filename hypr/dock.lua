@@ -1689,6 +1689,45 @@ local function save_away()
   end
 end
 
+-- A docked (pinned) window whose monitor was unplugged keeps pointing at it
+-- (Hyprland reports monitor -1) instead of moving with its workspace, so it
+-- shows nowhere, and the guard in dispatch_for skips commands for it. It's
+-- unpinned and moved to the workspace on screen of `m` directly: `m` is a
+-- monitor that's there, so this can't touch one being reconfigured.
+local function rescue(window, m)
+  local regular = m and m.active_workspace
+  if regular == nil or not usable_monitor(m) then
+    return
+  end
+  if window.pinned then
+    hl.dispatch(hl.dsp.window.pin({ window = selector(window) }))
+  end
+  hl.dispatch(hl.dsp.window.move({ window = selector(window), workspace = workspace_target(regular.name),
+    follow = false }))
+end
+
+-- The monitor a window of a vanished one goes to: its workspace's (Hyprland
+-- moves the workspaces), else the focused one.
+local function host_for(window, widths)
+  local m = window.monitor
+  if m and widths[m.name] then
+    return m
+  end
+  local ws = window.workspace and window.workspace.monitor
+  if ws and widths[ws.name] then
+    return ws
+  end
+  local active = hl.get_active_monitor()
+  if active and widths[active.name] then
+    return active
+  end
+  for _, other in ipairs(hl.get_monitors()) do
+    if widths[other.name] then
+      return other
+    end
+  end
+end
+
 -- Docks a window that was away again on its own monitor, now that it's back:
 -- moved to the workspace on screen there, then docked as it was (unless there's
 -- no room for it now).
@@ -1774,7 +1813,7 @@ monitors_changed = function()
       -- Its monitor gone for good (unplugged): undocked into the layout of the
       -- monitor Hyprland moved it to, and docked again when its own is back.
       -- (Docking them all on, say, a laptop panel crowded out everything else.)
-      if widths[p.monitor] == nil and window.monitor and widths[window.monitor.name]
+      if widths[p.monitor] == nil and host_for(window, widths)
           and gone_since[p.monitor] and os.time() - gone_since[p.monitor] >= GONE_GRACE then
         away[address] = { edge = p.edge, home = p.home or p.monitor, width = p.width, pos = p.pos,
           was_floating = p.was_floating, mw = p.mw }
@@ -1792,11 +1831,12 @@ monitors_changed = function()
     end
   end
   for _, window in ipairs(leaving) do
-    -- Parked behind the screensaver: back onto the workspace on screen first.
+    -- Left without a monitor, or parked behind the screensaver: onto the
+    -- workspace on screen of the monitor it goes to, first.
     local ws = window.workspace and window.workspace.name or ""
-    local regular = window.monitor and window.monitor.active_workspace
-    if ws == PARKED and regular then
-      dispatch_for(window, hl.dsp.window.move, { workspace = workspace_target(regular.name), follow = false })
+    local stranded = not (window.monitor and widths[window.monitor.name])
+    if stranded or ws == PARKED then
+      rescue(window, host_for(window, widths))
     end
     unpin(current(window.address) or window)
   end
