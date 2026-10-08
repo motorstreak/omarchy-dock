@@ -788,6 +788,21 @@ local function adopt_width(address)
     end
     local wider = now.size.x > p.width + 1
     local taller = p.placed_h and now.size.y > p.placed_h + 1
+    -- Seen narrower than a minimum learnt before: that wasn't one.
+    if p.min_w and now.size.x < p.min_w - 1 then
+      p.min_w = nil
+    end
+    -- Wider or taller than asked: asked once more before believing it. Just
+    -- after a window floats, Hyprland can put back its old floating size over
+    -- ours, which isn't its app refusing (and a wrong minimum stuck: the stack
+    -- couldn't be made narrower).
+    if (wider or taller) and not p.asked_again then
+      p.asked_again = true
+      place(now, p)
+      adopt_width(address)
+      return
+    end
+    p.asked_again = nil
     if wider then
       -- Its app's minimum, which pushing the stack (see resize) respects.
       p.min_w = math.floor(now.size.x)
