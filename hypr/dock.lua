@@ -573,6 +573,7 @@ local function place(window, p)
   local height = s.h - 2 * b
   p.placed_h = math.floor(height)
   local x = p.edge == "left" and (m.x + left + b) or (m.x + mw - right - b - p.width)
+  p.placed_x, p.placed_y = math.floor(x), math.floor(y)
   dispatch_for(window, hl.dsp.window.resize, { x = math.floor(p.width), y = math.floor(height) })
   dispatch_for(window, hl.dsp.window.move, { x = math.floor(x), y = math.floor(y) })
   dispatch_for(window, hl.dsp.window.alter_zorder, { mode = "bottom" })
@@ -1105,6 +1106,105 @@ local function resize(dx)
   place_stack(p.monitor, p.edge)
 end
 
+-- Dragging ---------------------------------------------------------------------------
+
+-- The docked window under the pointer, if any.
+local function pinned_at_cursor()
+  local c = hl.get_cursor_pos()
+  if c == nil then
+    return nil
+  end
+  for address in pairs(pinned) do
+    local w = current(address)
+    if w and w.at and w.size and c.x >= w.at.x and c.x < w.at.x + w.size.x
+        and c.y >= w.at.y and c.y < w.at.y + w.size.y then
+      return w
+    end
+  end
+  return nil
+end
+
+-- A docked window dragged (SUPER + left mouse) and let go stays docked: into
+-- the stack at the edge it's nearer to, on the monitor it was dropped on, at
+-- the height it was dropped (its place in the stack).
+local function redock(window)
+  local p = pinned[window.address]
+  local m = window.monitor
+  if p == nil then
+    return
+  end
+  local from_monitor, from_edge = p.monitor, p.edge
+  if m == nil then
+    place_stack(from_monitor, from_edge)
+    return
+  end
+  local edge, _, pos = measure(window)
+  if m.name ~= from_monitor or edge ~= from_edge then
+    local others = stack(m.name, edge)
+    p.monitor, p.edge = m.name, edge
+    if #others > 0 then
+      p.width = others[1].p.width
+    else
+      local most = max_width(m.name, edge)
+      if most < MIN_WIDTH then
+        p.monitor, p.edge = from_monitor, from_edge
+        announce("Not enough room to dock")
+        place_stack(from_monitor, from_edge)
+        return
+      end
+      p.width = math.min(p.width, most)
+    end
+    p.mw = math.floor(logical_size(m))
+  end
+  -- Level with one there already: below it.
+  p.pos = pos + 0.0001
+  save()
+  sync()
+  if m.name ~= from_monitor or edge ~= from_edge then
+    place_stack(from_monitor, from_edge)
+  end
+  place_stack(p.monitor, p.edge)
+end
+
+-- SUPER + SHIFT + left mouse on a docked window: let go, it's an ordinary
+-- tiled window, placed by the layout where it was dropped.
+local function undock_to_tiling(window)
+  local address = window.address
+  forget(window)
+  unpin(window)
+  local now = current(address)
+  if now and now.floating then
+    dispatch_for(now, hl.dsp.window.float, { action = "disable" })
+  end
+  sync_keys_soon()
+  announce("Undocked")
+end
+
+-- Set on SUPER + SHIFT + left mouse over a docked window, used on release.
+local undock_drag = nil
+
+-- The left button let go (after any drag): the window SUPER + SHIFT grabbed
+-- goes to tiling; any other docked window no longer where it was placed was
+-- dragged, and is docked again.
+local function dropped()
+  local grabbed = undock_drag
+  undock_drag = nil
+  if grabbed then
+    local w = current(grabbed)
+    if w and pinned[grabbed] then
+      undock_to_tiling(w)
+    end
+    return
+  end
+  for address, p in pairs(pinned) do
+    local w = current(address)
+    if w and p.placed_x and w.at and (math.abs(w.at.x - p.placed_x) > 4 or math.abs(w.at.y - p.placed_y) > 4
+        or (w.monitor and w.monitor.name ~= p.monitor)) then
+      redock(w)
+    end
+  end
+end
+
 -- A pinned window's height keys: it keeps its height (its share of the stack), in place.
 local function keep_height()
   local window = hl.get_active_window()
@@ -1563,6 +1663,20 @@ hl.bind("mouse:272", guard("lowering pinned windows", function()
     hl.timer(guard("lowering pinned windows", lower_all), { timeout = 1, type = "oneshot" })
   end
 end), { non_consuming = true, description = "Keep pinned windows under floating ones" })
+
+-- Dragging a docked window (SUPER + left mouse, Omarchy's move) keeps it
+-- docked; SUPER + SHIFT + left mouse moves any window, and lets a docked one go
+-- into tiling. Hyprland has no event for the end of a drag: the button's
+-- release, with any modifiers, stands in. (Bound once: see above.)
+hl.bind("SUPER + SHIFT + mouse:272", hl.dsp.window.drag(), { mouse = true, description = "Move window; undock a docked one into tiling" })
+hl.bind("SUPER + SHIFT + mouse:272", guard("grabbing a docked window", function()
+  local w = pinned_at_cursor()
+  undock_drag = w and w.address or nil
+end), { non_consuming = true })
+hl.bind("mouse:272", guard("dropping a docked window", function()
+  -- After Hyprland has finished the drag.
+  hl.timer(guard("dropping a docked window", dropped), { timeout = 10, type = "oneshot" })
+end), { release = true, non_consuming = true, ignore_mods = true })
 
 if config.pin then
   hl.unbind(config.pin)

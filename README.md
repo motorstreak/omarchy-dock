@@ -26,6 +26,8 @@ they were and the key goes away.
 | `Super + Shift + Left/Right` | With a pinned window focused: move it to that edge, into the stack there (taking its width) |
 | `Super + Shift + Up/Down` | With a pinned window focused: move it up / down its stack |
 | `Super + Minus / Equal` | With a pinned window focused: move its inner edge left / right, exactly as between two tiled windows; tiled windows grow or shrink to match (`Alt`: a little, `Ctrl`: a lot) |
+| `Super + drag` | A pinned window stays pinned: let go, it snaps into the stack at the edge it's nearer to (on the monitor it's dropped on), at the height it was dropped |
+| `Super + Shift + drag` | Moves any window; a pinned one is unpinned when let go and tiled where it's dropped |
 | `Super + Shift + Minus / Equal` | With a pinned window focused: nothing. It always fills the height below the bar (or its share of a stack), so it can't grow past the screen |
 
 - Pinned windows have the usual border in the theme's cyan, so they're easy to
