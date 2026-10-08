@@ -39,6 +39,18 @@ they were and the key goes away.
 - A window that was floating keeps its width; a tiled one gets 30% of the
   screen (see `width` below). It always takes the full height below the bar
   (shared, in a stack).
+- In a stack, an app that won't be shorter than its slot (some have a minimum
+  height) keeps its own height and the others share the rest; if they can't
+  (under 100 px each), that window is undocked: "Not enough room in the stack".
+- A window docks to the side it's nearer to, measured from the middle of the
+  space between the docked windows (not the screen's middle).
+- Docked windows always leave at least 30% of the screen's width free: an
+  edge's stack is at most 60% of it, and less if the other edge's stack would
+  leave less free. Resizing stops there, and docking a window that couldn't get
+  at least 300 px says "Not enough room to dock" instead.
+- Floating windows on that screen are moved (and narrowed if they're too wide)
+  into the space left beside the docked windows, so none ends up under one.
+  Undocking leaves them where they are.
 - Pinned windows follow the monitor: when its resolution or scale changes, or
   the bar appears or goes, they're placed again to fit, keeping their width as a
   share of the screen. If their monitor is unplugged, they stay pinned to the

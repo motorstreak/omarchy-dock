@@ -506,28 +506,72 @@ end
 -- outer gap away from the screen edges and the bar, and windows stacked on one
 -- edge the gap between tiled windows apart, sharing the height equally. (Hyprland's
 -- position and size are the window's own, inside the border.)
+-- A window in a stack needs at least this much height, besides what apps that
+-- won't be shorter keep.
+local MIN_SLOT = 100
+
+-- A stack's slots, from the top: { y = offset, h = outer height } each. They
+-- share the height equally, except that a window whose app won't be shorter
+-- (p.min_h, learnt once placed) keeps its height and the others share the
+-- rest. Also whether they fit.
+local function slots(list, avail, gap)
+  local n = #list
+  local fixed, free, rest = {}, avail - (n - 1) * gap, n
+  local changed = true
+  while changed and rest > 0 do
+    changed = false
+    for k, e in ipairs(list) do
+      if not fixed[k] and e.p.min_h and e.p.min_h > free / rest then
+        fixed[k] = e.p.min_h
+        free, rest, changed = free - e.p.min_h, rest - 1, true
+      end
+    end
+  end
+  local share = rest > 0 and math.floor(free / rest) or 0
+  local last = nil
+  for k = 1, n do
+    if not fixed[k] then
+      last = k
+    end
+  end
+  local out, y = {}, 0
+  for k = 1, n do
+    -- The last shared one takes what rounding left over.
+    local h = fixed[k] or (k == last and free - share * (rest - 1)) or share
+    out[k] = { y = y, h = h }
+    y = y + h + gap
+  end
+  return out, free >= (rest > 0 and rest * MIN_SLOT or 0)
+end
+
+-- The height a stack has below the bar on its monitor.
+local function stack_height(m)
+  local _, mh = logical_size(m)
+  local top, _, bottom = gaps()
+  local r = m.reserved or {}
+  return mh - (r.top or 0) - (r.bottom or 0) - top - bottom
+end
+
 local function place(window, p)
   local m = monitor_named(p.monitor)
   if m == nil then
     return
   end
-  local mw, mh = logical_size(m)
-  local top, right, bottom, left = gaps()
+  local mw = logical_size(m)
+  local top, right, _, left = gaps()
   local b = border()
   local r = m.reserved or {}
   local list = stack(p.monitor, p.edge)
-  local n, i = math.max(#list, 1), 1
+  local i = 1
   for k, e in ipairs(list) do
     if e.address == window.address then
       i = k
     end
   end
-  local gap = inner_gap()
-  local avail = mh - (r.top or 0) - (r.bottom or 0) - top - bottom
-  local slot = math.floor((avail - (n - 1) * gap) / n)
-  local y = m.y + (r.top or 0) + top + (i - 1) * (slot + gap) + b
-  -- The last one takes what rounding left over.
-  local height = (i == n and (avail - (n - 1) * (slot + gap)) or slot) - 2 * b
+  local s = slots(list, stack_height(m), inner_gap())[i] or { y = 0, h = stack_height(m) }
+  local y = m.y + (r.top or 0) + top + s.y + b
+  local height = s.h - 2 * b
+  p.placed_h = math.floor(height)
   local x = p.edge == "left" and (m.x + left + b) or (m.x + mw - right - b - p.width)
   dispatch_for(window, hl.dsp.window.resize, { x = math.floor(p.width), y = math.floor(height) })
   dispatch_for(window, hl.dsp.window.move, { x = math.floor(x), y = math.floor(y) })
@@ -586,6 +630,37 @@ local function fit_scrolling(name)
   hl.config({ cursor = { no_warps = no_warps == true } })
 end
 
+-- Floating windows don't follow reserved space as tiled ones do, so a dock
+-- covered them. Each floating window on the monitor (on any of its regular
+-- workspaces) is moved inside the space beside the strips, at the outer gap,
+-- and narrowed if it's wider than that space. (Undocking leaves them be.)
+local function fit_floating(name)
+  local m = monitor_named(name)
+  if m == nil then
+    return
+  end
+  local mw = logical_size(m)
+  local _, right, _, left = gaps()
+  local r = m.reserved or {}
+  local from = m.x + (r.left or 0) + left
+  local to = m.x + mw - (r.right or 0) - right
+  for _, w in ipairs(hl.get_windows()) do
+    local ws = w.workspace and w.workspace.name or "special:"
+    if w.floating and not w.pinned and pinned[w.address] == nil and w.monitor and w.monitor.name == name
+        and ws:sub(1, 8) ~= "special:" and (w.fullscreen or 0) == 0 then
+      local width = math.min(w.size.x, to - from)
+      local x = math.min(math.max(w.at.x, from), to - width)
+      if width < w.size.x then
+        -- (Resizing a floating window keeps its centre: moved after.)
+        dispatch_for(w, hl.dsp.window.resize, { x = math.floor(width), y = math.floor(w.size.y) })
+      end
+      if width < w.size.x or x ~= w.at.x then
+        dispatch_for(w, hl.dsp.window.move, { x = math.floor(x), y = math.floor(w.at.y) })
+      end
+    end
+  end
+end
+
 local function reserved_sides(m)
   local r = m.reserved or {}
   return (r.left or 0) .. " " .. (r.right or 0)
@@ -619,6 +694,7 @@ local function fit_when_strips_land()
       hl.timer(guard("fitting scrolling columns", function()
         for _, name in ipairs(changed) do
           fit_scrolling(name)
+          fit_floating(name)
         end
       end), { timeout = 20, type = "oneshot" })
     else
@@ -643,6 +719,27 @@ local seq = 0
 local function strip_size(p)
   local _, right, _, left = gaps()
   return math.floor(p.width + 2 * border() + (p.edge == "left" and left or right))
+end
+
+-- Docked windows leave at least this share of a monitor's width to the rest of
+-- the workspace (or tiled windows shrink to slivers), and a docked window is at
+-- least MIN_WIDTH wide.
+local MIN_FREE = 0.3
+local MIN_WIDTH = 300
+
+-- The widest a stack at this edge of the monitor may be: 60% of it, and less
+-- if the other edge's stack would leave under MIN_FREE free. (A window moving
+-- edges counts at its new edge only.)
+local function max_width(monitor, edge)
+  local m = monitor_named(monitor)
+  if m == nil then
+    return MIN_WIDTH
+  end
+  local mw = logical_size(m)
+  local other = stack(monitor, edge == "left" and "right" or "left")
+  local taken = #other > 0 and strip_size(other[1].p) or 0
+  local overhead = strip_size({ width = 0, edge = edge })
+  return math.floor(math.min(mw * 0.6, mw * (1 - MIN_FREE) - taken - overhead))
 end
 
 local function sync()
@@ -672,19 +769,41 @@ end
 -- edge, say) it places the window anyway.
 local place_with_strip, place_stack
 
--- An app can refuse to be narrower than its own minimum: the window then
--- keeps a larger width than asked, placed for the smaller one, and hangs off
--- the screen. So, once the app has answered a placement, a wider window's
--- width becomes its pinned width and it's placed again. (It only grows, so
--- this settles at once.)
+-- Defined below (Pinning): a window its stack has no room for is undocked.
+local overflowed
+
+-- An app can refuse to be narrower or shorter than its own minimum: the window
+-- then keeps a larger size than asked (Hyprland centres it on the smaller one),
+-- hangs off the screen or over its neighbours in the stack. So, once the app
+-- has answered a placement, a wider window's width becomes its pinned width,
+-- and a taller one's height its minimum in the stack (see slots), and the stack
+-- is placed again. (They only grow, so this settles at once.) A stack that
+-- can't hold that height lets the window go.
 local function adopt_width(address)
-  hl.timer(guard("checking the pinned window's width", function()
+  hl.timer(guard("checking the pinned window's size", function()
     local now, p = current(address), pinned[address]
-    if now and p and now.size and now.size.x > p.width + 1 then
+    if now == nil or p == nil or now.size == nil then
+      return
+    end
+    local wider = now.size.x > p.width + 1
+    local taller = p.placed_h and now.size.y > p.placed_h + 1
+    if wider then
       -- The whole stack: it shares one width.
       for _, e in ipairs(stack(p.monitor, p.edge)) do
         e.p.width = math.floor(now.size.x)
       end
+    end
+    if taller then
+      p.min_h = math.floor(now.size.y) + 2 * border()
+      local m = monitor_named(p.monitor)
+      local _, fits = slots(stack(p.monitor, p.edge), m and stack_height(m) or 0, inner_gap())
+      if not fits then
+        p.min_h = nil
+        overflowed(now)
+        return
+      end
+    end
+    if wider or taller then
       save()
       sync()
       place_stack(p.monitor, p.edge)
@@ -756,7 +875,11 @@ end
 local function measure(window)
   local m = window.monitor
   local mw, mh = logical_size(m)
-  local edge = (window.at.x + window.size.x / 2) < (m.x + mw / 2) and "left" or "right"
+  -- Nearer the left or right of the space between the docked windows (the
+  -- screen's middle is off to one side when the stacks differ in width).
+  local r = m.reserved or {}
+  local middle = m.x + ((r.left or 0) + mw - (r.right or 0)) / 2
+  local edge = (window.at.x + window.size.x / 2) < middle and "left" or "right"
   local width = window.floating and window.size.x or mw * config.width
   local pos = (window.at.y + window.size.y / 2 - m.y) / mh
   return edge, math.floor(math.min(math.max(width, 300), mw * 0.6)), pos
@@ -775,6 +898,13 @@ local function pin_here(window, edge, width, pos)
   local others = stack(m.name, edge)
   if #others > 0 then
     width = others[1].p.width
+  else
+    -- No room left beside the other edge's stack: not docked.
+    local most = max_width(m.name, edge)
+    if most < MIN_WIDTH then
+      return false
+    end
+    width = math.min(width, most)
   end
 
   local p = { edge = edge, monitor = m.name, width = width, was_floating = window.floating == true, pos = pos,
@@ -801,6 +931,7 @@ local function pin_here(window, edge, width, pos)
     end
   end), { timeout = 50, type = "oneshot" })
   sync()
+  return true
 end
 
 -- Defined further down: pinning and unpinning re-check who has the swap keys.
@@ -837,6 +968,13 @@ local function tiled(address)
   sync_keys_soon()
 end
 
+overflowed = function(window)
+  forget(window)
+  unpin(window)
+  sync_keys_soon()
+  announce("Not enough room in the stack")
+end
+
 -- SUPER + ALT + P on the focused window.
 local function toggle()
   local window = hl.get_active_window()
@@ -870,7 +1008,10 @@ local function toggle()
     hl.timer(guard("pinning the window", function()
       local now = current(address)
       if now and now.workspace and now.workspace.name:sub(1, 8) ~= "special:" then
-        pin_here(now, edge, width, pos)
+        if not pin_here(now, edge, width, pos) then
+          announce("Not enough room to dock")
+          return
+        end
         sync_keys_soon()
         hl.dispatch(hl.dsp.focus({ window = selector(now) }))
         announce_pinned(now.address)
@@ -878,7 +1019,10 @@ local function toggle()
     end), { timeout = 150, type = "oneshot" })
     return
   end
-  pin_here(window)
+  if not pin_here(window) then
+    announce("Not enough room to dock")
+    return
+  end
   sync_keys_soon()
   announce_pinned(window.address)
 end
@@ -912,10 +1056,18 @@ local function move(direction)
   end
   local from = p.edge
   local others = stack(p.monitor, edge)
+  p.edge = edge
   if #others > 0 then
     p.width = others[1].p.width
+  else
+    local most = max_width(p.monitor, edge)
+    if most < MIN_WIDTH then
+      p.edge = from
+      announce("Not enough room to dock")
+      return
+    end
+    p.width = math.min(p.width, most)
   end
-  p.edge = edge
   -- Level with one there already (both in the middle of their slots): below it.
   p.pos = p.pos + 0.0001
   save()
@@ -942,9 +1094,8 @@ local function resize(dx)
   if m == nil then
     return
   end
-  local mw = logical_size(m)
   local width = p.edge == "right" and (p.width - dx) or (p.width + dx)
-  width = math.floor(math.min(math.max(width, 300), mw * 0.6))
+  width = math.floor(math.max(math.min(width, max_width(p.monitor, p.edge)), MIN_WIDTH))
   -- The whole stack: it shares one width.
   for _, e in ipairs(stack(p.monitor, p.edge)) do
     e.p.width = width
