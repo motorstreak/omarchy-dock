@@ -1657,6 +1657,63 @@ end
 local gone_since = {}
 local GONE_GRACE = 2
 
+-- Windows undocked because their monitor went (unplugged): by address, how
+-- they were docked { edge, home, width, pos, was_floating, mw }, to dock them
+-- there again when it's back. Kept in a file too, across reloads.
+local away = {}
+local away_file = state_root .. "/away"
+
+do
+  local f = io.open(away_file, "r")
+  if f then
+    for line in f:lines() do
+      local address, edge, home, width, pos, floated, mw =
+        line:match("^(%S+) (%a+) (%S+) (%d+) ([%d.]+) ([01]) (%d+)$")
+      if address and (edge == "left" or edge == "right") and current(address) then
+        away[address] = { edge = edge, home = home, width = tonumber(width), pos = tonumber(pos),
+          was_floating = floated == "1", mw = tonumber(mw) }
+      end
+    end
+    f:close()
+  end
+end
+
+local function save_away()
+  local f = io.open(away_file, "w")
+  if f then
+    for address, a in pairs(away) do
+      f:write(string.format("%s %s %s %d %.4f %d %d\n", address, a.edge, a.home, a.width, a.pos,
+        a.was_floating and 1 or 0, a.mw or 0))
+    end
+    f:close()
+  end
+end
+
+-- Docks a window that was away again on its own monitor, now that it's back:
+-- moved to the workspace on screen there, then docked as it was (unless there's
+-- no room for it now).
+local function return_home(address, a)
+  local window = current(address)
+  local m = monitor_named(a.home)
+  local regular = m and m.active_workspace
+  if window == nil or regular == nil or pinned[address] then
+    return
+  end
+  dispatch_for(window, hl.dsp.window.move, { workspace = workspace_target(regular.name), follow = false })
+  hl.timer(guard("docking a window again", function()
+    local now = current(address)
+    if now == nil or pinned[address] or not now.monitor or now.monitor.name ~= a.home then
+      return
+    end
+    local mw = logical_size(now.monitor)
+    local width = (a.mw and a.mw > 0) and math.floor(a.width * mw / a.mw + 0.5) or a.width
+    if pin_here(now, a.edge, width, a.pos) ~= false and pinned[address] then
+      pinned[address].was_floating = a.was_floating
+      save()
+    end
+  end), { timeout = 150, type = "oneshot" })
+end
+
 -- A pinned window back on its own monitor (see below): Hyprland won't move a
 -- pinned window, so it's unpinned, moved to the workspace on that monitor and
 -- pinned again. (Parked for the screensaver, it's left for unpark.)
@@ -1702,6 +1759,7 @@ monitors_changed = function()
       { timeout = (GONE_GRACE + 1) * 1000, type = "oneshot" })
   end
   local stacks = {}
+  local leaving = {}
   for address, p in pairs(pinned) do
     local window = current(address)
     if window then
@@ -1713,13 +1771,16 @@ monitors_changed = function()
         end
         p.home = nil
       end
-      -- Its monitor gone for good: on the one it's on, until it's back.
+      -- Its monitor gone for good (unplugged): undocked into the layout of the
+      -- monitor Hyprland moved it to, and docked again when its own is back.
+      -- (Docking them all on, say, a laptop panel crowded out everything else.)
       if widths[p.monitor] == nil and window.monitor and widths[window.monitor.name]
           and gone_since[p.monitor] and os.time() - gone_since[p.monitor] >= GONE_GRACE then
-        p.home = p.home or p.monitor
-        p.monitor = window.monitor.name
+        away[address] = { edge = p.edge, home = p.home or p.monitor, width = p.width, pos = p.pos,
+          was_floating = p.was_floating, mw = p.mw }
+        table.insert(leaving, window)
       end
-      local now = widths[p.monitor]
+      local now = not away[address] and widths[p.monitor]
       if now then
         if p.mw and p.mw > 0 and p.mw ~= now then
           p.width = math.floor(p.width * now / p.mw + 0.5)
@@ -1730,6 +1791,25 @@ monitors_changed = function()
       end
     end
   end
+  for _, window in ipairs(leaving) do
+    -- Parked behind the screensaver: back onto the workspace on screen first.
+    local ws = window.workspace and window.workspace.name or ""
+    local regular = window.monitor and window.monitor.active_workspace
+    if ws == PARKED and regular then
+      dispatch_for(window, hl.dsp.window.move, { workspace = workspace_target(regular.name), follow = false })
+    end
+    unpin(current(window.address) or window)
+  end
+  -- Back: docked again on their own monitor.
+  for address, a in pairs(away) do
+    if current(address) == nil then
+      away[address] = nil
+    elseif widths[a.home] then
+      away[address] = nil
+      return_home(address, a)
+    end
+  end
+  save_away()
   -- A stack shares one width (a window moved here from a monitor that's gone
   -- joins a stack that may have another).
   for _, st in pairs(stacks) do
@@ -1839,6 +1919,10 @@ hl.on("window.close", guard("closing a window", function(window)
     return
   end
   local address = window and window.address
+  if address and away[address] then
+    away[address] = nil
+    save_away()
+  end
   local p = address and pinned[address]
   if p then
     pinned[address] = nil
