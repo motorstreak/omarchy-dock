@@ -173,10 +173,11 @@ do
   local f = io.open(pinned_file, "r")
   if f then
     for line in f:lines() do
-      local address, edge, monitor, width, floated, pos, mw = line:match("^(%S+) (%a+) (%S+) (%d+) ([01]) ?([%d.]*) ?(%d*)$")
+      local address, edge, monitor, width, floated, pos, mw, home =
+        line:match("^(%S+) (%a+) (%S+) (%d+) ([01]) ?([%d.]*) ?(%d*) ?(%S*)$")
       if address and (edge == "left" or edge == "right") then
         pinned[address] = { edge = edge, monitor = monitor, width = tonumber(width), was_floating = floated == "1",
-          pos = tonumber(pos) or 0.5, mw = tonumber(mw) }
+          pos = tonumber(pos) or 0.5, mw = tonumber(mw), home = home ~= "" and home or nil }
       end
     end
     f:close()
@@ -247,8 +248,8 @@ local function save()
   local f = io.open(pinned_file, "w")
   if f then
     for address, p in pairs(pinned) do
-      f:write(string.format("%s %s %s %d %d %.4f %d\n", address, p.edge, p.monitor, p.width, p.was_floating and 1 or 0, p.pos,
-        p.mw or 0))
+      f:write(string.format("%s %s %s %d %d %.4f %d%s\n", address, p.edge, p.monitor, p.width, p.was_floating and 1 or 0, p.pos,
+        p.mw or 0, p.home and (" " .. p.home) or ""))
     end
     f:close()
   end
@@ -722,15 +723,14 @@ local function strip_size(p)
   return math.floor(p.width + 2 * border() + (p.edge == "left" and left or right))
 end
 
--- Docked windows leave at least this share of a monitor's width to the rest of
--- the workspace (or tiled windows shrink to slivers), and a docked window is at
--- least MIN_WIDTH wide.
-local MIN_FREE = 0.3
+-- The docks at both edges of a monitor together take at most this share of
+-- its width (strips included), leaving the rest to the workspace (or tiled
+-- windows shrink to slivers); a docked window is at least MIN_WIDTH wide.
+local MAX_DOCKED = 0.7
 local MIN_WIDTH = 300
 
--- The widest a stack at this edge of the monitor may be: 60% of it, and less
--- if the other edge's stack would leave under MIN_FREE free. (A window moving
--- edges counts at its new edge only.)
+-- The widest a stack at this edge of the monitor may be beside the other
+-- edge's stack as it is. (A window moving edges counts at its new edge only.)
 local function max_width(monitor, edge)
   local m = monitor_named(monitor)
   if m == nil then
@@ -740,7 +740,7 @@ local function max_width(monitor, edge)
   local other = stack(monitor, edge == "left" and "right" or "left")
   local taken = #other > 0 and strip_size(other[1].p) or 0
   local overhead = strip_size({ width = 0, edge = edge })
-  return math.floor(math.min(mw * 0.6, mw * (1 - MIN_FREE) - taken - overhead))
+  return math.floor(mw * MAX_DOCKED - taken - overhead)
 end
 
 local function sync()
@@ -789,9 +789,22 @@ local function adopt_width(address)
     local wider = now.size.x > p.width + 1
     local taller = p.placed_h and now.size.y > p.placed_h + 1
     if wider then
+      -- Its app's minimum, which pushing the stack (see resize) respects.
+      p.min_w = math.floor(now.size.x)
       -- The whole stack: it shares one width.
       for _, e in ipairs(stack(p.monitor, p.edge)) do
-        e.p.width = math.floor(now.size.x)
+        e.p.width = p.min_w
+      end
+      -- The other edge's stack gives way if both now take over the limit.
+      local other = stack(p.monitor, p.edge == "left" and "right" or "left")
+      if #other > 0 then
+        local most = math.max(max_width(p.monitor, other[1].p.edge), MIN_WIDTH)
+        if other[1].p.width > most then
+          for _, e in ipairs(other) do
+            e.p.width = most
+          end
+          place_stack(p.monitor, other[1].p.edge)
+        end
       end
     end
     if taller then
@@ -800,7 +813,11 @@ local function adopt_width(address)
       local _, fits = slots(stack(p.monitor, p.edge), m and stack_height(m) or 0, inner_gap())
       if not fits then
         p.min_h = nil
-        overflowed(now)
+        -- Away from its monitor (see monitors_changed) it's crowded for a
+        -- while, not undocked.
+        if p.home == nil then
+          overflowed(now)
+        end
         return
       end
     end
@@ -883,7 +900,7 @@ local function measure(window)
   local edge = (window.at.x + window.size.x / 2) < middle and "left" or "right"
   local width = window.floating and window.size.x or mw * config.width
   local pos = (window.at.y + window.size.y / 2 - m.y) / mh
-  return edge, math.floor(math.min(math.max(width, 300), mw * 0.6)), pos
+  return edge, math.floor(math.min(math.max(width, MIN_WIDTH), mw * MAX_DOCKED)), pos
 end
 
 -- Pins a window on a regular workspace to the given edge at the given width and
@@ -1085,25 +1102,94 @@ end
 -- SUPER + MINUS/EQUAL (ALT: small steps, CTRL: big ones) on a pinned window:
 -- its inner edge moves left/right, as the line between two tiled windows does
 -- with Omarchy's resize keys, and the tiled windows follow it.
-local function resize(dx)
-  local window = hl.get_active_window()
-  local p = window and pinned[window.address]
-  if p == nil then
-    return
+-- Said at most every 2 seconds: a held key repeats.
+local said_full = 0
+local function say_full()
+  if os.time() - said_full >= 2 then
+    said_full = os.time()
+    announce("Docks at maximum width")
   end
-  local m = monitor_named(p.monitor)
-  if m == nil then
-    return
+end
+
+-- A stack's new width, asked by the resize keys or a mouse resize: within the
+-- limits, pushing the other edge's stack if it must, and placed again.
+-- (The widths only: returns the other edge, if its stack was pushed.)
+local function apply_width(p, width)
+  -- Not narrower than its stack's apps go (see adopt_width): the others in it
+  -- stop there too.
+  local own = stack(p.monitor, p.edge)
+  for _, e in ipairs(own) do
+    width = math.max(width, e.p.min_w or 0)
   end
-  local width = p.edge == "right" and (p.width - dx) or (p.width + dx)
-  width = math.floor(math.max(math.min(width, max_width(p.monitor, p.edge)), MIN_WIDTH))
+  width = math.max(width, MIN_WIDTH)
+  local others = stack(p.monitor, p.edge == "left" and "right" or "left")
+  local pushed = false
+  local most = max_width(p.monitor, p.edge)
+  if width > most and #others > 0 then
+    -- Past the limit, it pushes the other edge's stack, which keeps the space
+    -- between them as it is, down to MIN_WIDTH (or the narrowest its apps go).
+    local floor = MIN_WIDTH
+    for _, e in ipairs(others) do
+      floor = math.max(floor, e.p.min_w or 0)
+    end
+    local give = math.min(width - most, others[1].p.width - floor)
+    if give > 0 then
+      for _, e in ipairs(others) do
+        e.p.width = math.floor(e.p.width - give)
+      end
+      pushed = true
+      most = max_width(p.monitor, p.edge)
+    end
+  end
+  if width > most then
+    width = math.max(most, MIN_WIDTH)
+    say_full()
+  end
   -- The whole stack: it shares one width.
   for _, e in ipairs(stack(p.monitor, p.edge)) do
-    e.p.width = width
+    e.p.width = math.floor(width)
   end
+  return pushed and others[1].p.edge or nil
+end
+
+local function set_width(p, width)
+  if monitor_named(p.monitor) == nil then
+    return
+  end
+  local pushed = apply_width(p, width)
   save()
   sync()
   place_stack(p.monitor, p.edge)
+  if pushed then
+    place_stack(p.monitor, pushed)
+  end
+end
+
+local function resize(dx)
+  local window = hl.get_active_window()
+  local p = window and pinned[window.address]
+  if p then
+    set_width(p, p.edge == "right" and (p.width - dx) or (p.width + dx))
+  end
+end
+
+-- The right button let go after a mouse resize (SUPER + right mouse): a docked
+-- window whose width changed gives it to its whole stack, as the keys do (an
+-- app's minimum, like 1Password's, then holds for the stack); one whose height
+-- changed goes back to its place in the stack.
+local function resized()
+  for address, p in pairs(pinned) do
+    local w = current(address)
+    if w and w.size and p.placed_h then
+      if math.abs(w.size.x - p.width) > 2 then
+        set_width(p, math.floor(w.size.x))
+        return
+      elseif math.abs(w.size.y - p.placed_h) > 2 or (p.placed_x and math.abs(w.at.x - p.placed_x) > 2) then
+        place_stack(p.monitor, p.edge)
+        return
+      end
+    end
+  end
 end
 
 -- Dragging ---------------------------------------------------------------------------
@@ -1214,13 +1300,78 @@ local function keep_height()
   end
 end
 
+-- SUPER + right mouse on a docked window (the dock's bind while one has focus,
+-- see dock_keys): its stack's inner edge follows the pointer, within the same
+-- limits as the keys, until the button is let go. Hyprland reports no pointer
+-- motion, so the pointer is read every frame while the button is down, and
+-- only then. The windows move with it; the strip, which the shell redraws,
+-- follows every 100 ms at most; saving waits for the release.
+local live = nil
+
+local function follow_pointer()
+  local p = live and pinned[live.address]
+  local c = hl.get_cursor_pos()
+  if p == nil or c == nil or c.x == live.cx then
+    return
+  end
+  live.cx = c.x
+  local dx = c.x - live.x0
+  local pushed = apply_width(p, live.w0 + (p.edge == "left" and dx or -dx))
+  for _, edge in ipairs({ p.edge, pushed }) do
+    for _, e in ipairs(stack(p.monitor, edge)) do
+      local w = current(e.address)
+      if w then
+        place(w, e.p)
+      end
+    end
+  end
+end
+
+local function start_mouse_resize()
+  local w = pinned_at_cursor() or hl.get_active_window()
+  local p = w and pinned[w.address]
+  local c = hl.get_cursor_pos()
+  if p == nil or c == nil or live then
+    return
+  end
+  live = { address = w.address, x0 = c.x, w0 = p.width, cx = c.x, ticks = 0, synced = p.width }
+  live.timer = hl.timer(guard("resizing the docked windows", function()
+    if live == nil then
+      return
+    end
+    follow_pointer()
+    live.ticks = live.ticks + 1
+    local now = pinned[live.address]
+    if live.ticks % 6 == 0 and now and now.width ~= live.synced then
+      live.synced = now.width
+      sync()
+    end
+  end), { timeout = 16, type = "repeat" })
+end
+
+-- The button let go: saved, the strip sent, and placed with the app-minimum
+-- check (see adopt_width), as after the keys. False if no such resize ran.
+local function end_mouse_resize()
+  if live == nil then
+    return false
+  end
+  live.timer:set_enabled(false)
+  local p = pinned[live.address]
+  live = nil
+  if p then
+    set_width(p, p.width)
+  end
+  return true
+end
+
 -- Omarchy's keys a pinned window uses while it has focus: { keys, Omarchy's
--- description, Omarchy's action, ours }.
+-- description, Omarchy's action, ours, Omarchy's bind options }.
 local dock_keys = {
   { "SUPER + SHIFT + LEFT", "Swap window to the left", hl.dsp.window.swap({ direction = "l" }), function() move("l") end },
   { "SUPER + SHIFT + RIGHT", "Swap window to the right", hl.dsp.window.swap({ direction = "r" }), function() move("r") end },
   { "SUPER + SHIFT + UP", "Swap window up", hl.dsp.window.swap({ direction = "u" }), function() move("u") end },
   { "SUPER + SHIFT + DOWN", "Swap window down", hl.dsp.window.swap({ direction = "d" }), function() move("d") end },
+  { "SUPER + mouse:273", "Resize window", hl.dsp.window.resize(), function() start_mouse_resize() end, { mouse = true } },
 }
 -- Spelled exactly as Omarchy binds them (default/hypr/bindings/tiling.lua):
 -- unbinding goes by the spelling, modifier order included.
@@ -1260,7 +1411,7 @@ local function sync_keys()
     if want then
       o.bind(k[1], k[2] .. " (pinned window)", guard("the pinned window", k[4]))
     else
-      o.bind(k[1], k[2], k[3])
+      o.bind(k[1], k[2], k[3], k[5])
     end
   end
 end
@@ -1485,6 +1636,31 @@ local function monitor_states()
   return states
 end
 
+-- Monitors seen gone, and since when (os.time()). One gone for a moment (all
+-- of them are switched off and on as the system wakes, and come back one by
+-- one) isn't followed: only one still gone after GONE_GRACE seconds.
+local gone_since = {}
+local GONE_GRACE = 2
+
+-- A pinned window back on its own monitor (see below): Hyprland won't move a
+-- pinned window, so it's unpinned, moved to the workspace on that monitor and
+-- pinned again. (Parked for the screensaver, it's left for unpark.)
+local function go_home(window, m)
+  local ws = window.workspace and window.workspace.name or ""
+  local regular = m.active_workspace
+  if ws == PARKED or regular == nil then
+    return
+  end
+  if window.pinned then
+    dispatch_for(window, hl.dsp.window.pin, {})
+  end
+  dispatch_for(window, hl.dsp.window.move, { workspace = workspace_target(regular.name), follow = false })
+  local now = current(window.address)
+  if now and not now.pinned then
+    dispatch_for(now, hl.dsp.window.pin, {})
+  end
+end
+
 monitors_changed = function()
   monitor_state = monitor_states()
   local widths = {}
@@ -1493,11 +1669,39 @@ monitors_changed = function()
       widths[m.name] = math.floor(logical_size(m))
     end
   end
+  local waiting = false
+  for name in pairs(gone_since) do
+    if widths[name] then
+      gone_since[name] = nil
+    end
+  end
+  for _, p in pairs(pinned) do
+    if widths[p.monitor] == nil and gone_since[p.monitor] == nil then
+      gone_since[p.monitor] = os.time()
+      waiting = true
+    end
+  end
+  if waiting then
+    -- Looked at again once the grace is over.
+    hl.timer(guard("following a monitor change", function() monitors_changed() end),
+      { timeout = (GONE_GRACE + 1) * 1000, type = "oneshot" })
+  end
   local stacks = {}
   for address, p in pairs(pinned) do
     local window = current(address)
     if window then
-      if widths[p.monitor] == nil and window.monitor and widths[window.monitor.name] then
+      -- Back on its own monitor, once that's back.
+      if p.home and widths[p.home] then
+        if p.home ~= p.monitor then
+          p.monitor = p.home
+          go_home(window, monitor_named(p.home))
+        end
+        p.home = nil
+      end
+      -- Its monitor gone for good: on the one it's on, until it's back.
+      if widths[p.monitor] == nil and window.monitor and widths[window.monitor.name]
+          and gone_since[p.monitor] and os.time() - gone_since[p.monitor] >= GONE_GRACE then
+        p.home = p.home or p.monitor
         p.monitor = window.monitor.name
       end
       local now = widths[p.monitor]
@@ -1506,7 +1710,7 @@ monitors_changed = function()
           p.width = math.floor(p.width * now / p.mw + 0.5)
         end
         p.mw = now
-        p.width = math.floor(math.min(math.max(p.width, 300), now * 0.6))
+        p.width = math.floor(math.min(math.max(p.width, MIN_WIDTH), now * MAX_DOCKED))
         stacks[p.monitor .. " " .. p.edge] = { p.monitor, p.edge }
       end
     end
@@ -1598,7 +1802,7 @@ local function restore(window)
       return
     end
     local mw = logical_size(m)
-    pin_here(now, r.edge, math.floor(math.min(math.max(r.share * mw, 300), mw * 0.6)), r.pos)
+    pin_here(now, r.edge, math.floor(math.min(math.max(r.share * mw, MIN_WIDTH), mw * MAX_DOCKED)), r.pos)
     sync_keys_soon()
   end), { timeout = 100, type = "oneshot" })
 end
@@ -1678,6 +1882,14 @@ hl.bind("mouse:272", guard("dropping a docked window", function()
   hl.timer(guard("dropping a docked window", dropped), { timeout = 10, type = "oneshot" })
 end), { release = true, non_consuming = true, ignore_mods = true })
 
+hl.bind("mouse:273", guard("resizing a docked window", function()
+  if end_mouse_resize() then
+    return
+  end
+  -- Hyprland's own resize (a docked window that hadn't focus yet): after it.
+  hl.timer(guard("resizing a docked window", resized), { timeout = 10, type = "oneshot" })
+end), { release = true, non_consuming = true, ignore_mods = true })
+
 if config.pin then
   hl.unbind(config.pin)
   o.bind(config.pin, "Pin window to the screen edge", guard("pinning the window", toggle))
@@ -1696,6 +1908,9 @@ dock = {
   end,
   toggle = toggle,
   tiled = tiled,
+  resized = resized,
+  mouse_resize_start = start_mouse_resize,
+  mouse_resize_stop = end_mouse_resize,
   move = move,
   resize = resize,
   release = release,

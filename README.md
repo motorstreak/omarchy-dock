@@ -27,6 +27,7 @@ they were and the key goes away.
 | `Super + Shift + Up/Down` | With a pinned window focused: move it up / down its stack |
 | `Super + Minus / Equal` | With a pinned window focused: move its inner edge left / right, exactly as between two tiled windows; tiled windows grow or shrink to match (`Alt`: a little, `Ctrl`: a lot) |
 | `Super + drag` | A pinned window stays pinned: let go, it snaps into the stack at the edge it's nearer to (on the monitor it's dropped on), at the height it was dropped |
+| `Super + right-drag` (resize) | With a pinned window focused (hovering focuses it): its stack's inner edge follows the pointer, all its windows together, within the same limits as the keys; tiled windows follow. The stack stops at the widest minimum of its apps (1Password won't float narrower than 784 px) |
 | `Super + Shift + drag` | Moves any window; a pinned one is unpinned when let go and tiled where it's dropped |
 | `Super + Shift + Minus / Equal` | With a pinned window focused: nothing. It always fills the height below the bar (or its share of a stack), so it can't grow past the screen |
 
@@ -46,10 +47,12 @@ they were and the key goes away.
   (under 100 px each), that window is undocked: "Not enough room in the stack".
 - A window docks to the side it's nearer to, measured from the middle of the
   space between the docked windows (not the screen's middle).
-- Docked windows always leave at least 30% of the screen's width free: an
-  edge's stack is at most 60% of it, and less if the other edge's stack would
-  leave less free. Resizing stops there, and docking a window that couldn't get
-  at least 300 px says "Not enough room to dock" instead.
+- The docks at both edges together take at most 70% of the screen's width,
+  leaving at least 30% to other windows; a docked window is at least 300 px
+  wide. Widening one past the limit pushes the other edge's dock (the space
+  between them stays as it is) down to 300 px, then stops: "Docks at maximum
+  width". Docking a window that couldn't get 300 px says "Not enough room to
+  dock" instead.
 - Floating windows on that screen are moved (and narrowed if they're too wide)
   into the space left beside the docked windows, so none ends up under one.
   Undocking leaves them where they are.
