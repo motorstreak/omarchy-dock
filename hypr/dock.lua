@@ -1981,6 +1981,9 @@ hl.on("window.move_to_workspace", guard("moving a window", function(window, work
       and workspace.name ~= PARKED then
     -- Made a sidebar, say: no longer one to pin when it opens.
     forget(window)
+    -- Its shadow back to the config's, or the glow stays with it. (Not the
+    -- border: whatever took it sets its own.)
+    dispatch_for(window, hl.dsp.window.set_prop, { prop = "no_shadow", value = "unset" })
     local p = pinned[window.address]
     pinned[window.address] = nil
     save()
