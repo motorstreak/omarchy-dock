@@ -398,8 +398,10 @@ end
 -- colours (none unfocused), off again for every window by a rule, and back on
 -- for pinned windows by a property, which wins over rules. A reload undoes the
 -- config and rule; loading does them again.
+-- The Sidebar plugin's `shadow` turns shadows on the same way when it loads
+-- first (SIDEBAR_SHADOW): the glow's look wins, sidebars sharing it.
 local glowing = false
-if config.glow and not hl.get_config("decoration:shadow:enabled") then
+if config.glow and (not hl.get_config("decoration:shadow:enabled") or SIDEBAR_SHADOW) then
   local active = theme_border("general:col.active_border")
   local rgb = active and active:match("^rgba%((%x%x%x%x%x%x)")
   if rgb then
