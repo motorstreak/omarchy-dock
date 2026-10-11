@@ -1380,8 +1380,7 @@ local function end_mouse_resize()
 end
 
 -- Omarchy's keys a pinned window uses while it has focus: { keys, Omarchy's
--- description, Omarchy's action, ours, Omarchy's bind options, and for the
--- resize keys their step { x, y } }.
+-- description, Omarchy's action, ours, Omarchy's bind options }.
 local dock_keys = {
   { "SUPER + SHIFT + LEFT", "Swap window to the left", hl.dsp.window.swap({ direction = "l" }), function() move("l") end },
   { "SUPER + SHIFT + RIGHT", "Swap window to the right", hl.dsp.window.swap({ direction = "r" }), function() move("r") end },
@@ -1398,16 +1397,16 @@ for _, step in ipairs({
 }) do
   local mods, height_mods, how, dx = step[1], step[2], step[3], step[4]
   dock_keys[#dock_keys + 1] = { "SUPER + " .. mods .. "code:20", "Expand window left" .. how,
-    hl.dsp.window.resize({ x = -dx, y = 0, relative = true }), function() resize(-dx) end, nil, { -dx, 0 } }
+    hl.dsp.window.resize({ x = -dx, y = 0, relative = true }), function() resize(-dx) end }
   dock_keys[#dock_keys + 1] = { "SUPER + " .. mods .. "code:21", "Shrink window left" .. how,
-    hl.dsp.window.resize({ x = dx, y = 0, relative = true }), function() resize(dx) end, nil, { dx, 0 } }
+    hl.dsp.window.resize({ x = dx, y = 0, relative = true }), function() resize(dx) end }
   -- With SHIFT, Omarchy's keys change the height: a pinned window always fills
   -- the height below the bar (as its strip does), so they keep it there rather
   -- than let it grow past the screen.
   dock_keys[#dock_keys + 1] = { "SUPER + " .. height_mods .. "code:20", "Shrink window up" .. how,
-    hl.dsp.window.resize({ x = 0, y = -dx, relative = true }), function() keep_height() end, nil, { 0, -dx } }
+    hl.dsp.window.resize({ x = 0, y = -dx, relative = true }), function() keep_height() end }
   dock_keys[#dock_keys + 1] = { "SUPER + " .. height_mods .. "code:21", "Expand window down" .. how,
-    hl.dsp.window.resize({ x = 0, y = dx, relative = true }), function() keep_height() end, nil, { 0, dx } }
+    hl.dsp.window.resize({ x = 0, y = dx, relative = true }), function() keep_height() end }
 end
 local keys_taken = false
 
@@ -1426,13 +1425,6 @@ local function sync_keys()
     hl.unbind(k[1])
     if want then
       o.bind(k[1], k[2] .. " (pinned window)", guard("the pinned window", k[4]))
-    elseif k[6] and sidebar and sidebar.centers_floating and sidebar.centers_floating() then
-      -- The Sidebar plugin's `center_floating` has these resize floating
-      -- windows round their centre: back to it, not to Omarchy.
-      local d = k[6]
-      o.bind(k[1], k[2], guard(k[2], function()
-        sidebar.resize(d[1], d[2])
-      end))
     else
       o.bind(k[1], k[2], k[3], k[5])
     end
