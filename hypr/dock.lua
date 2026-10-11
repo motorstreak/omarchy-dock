@@ -400,8 +400,11 @@ end
 -- config and rule; loading does them again.
 -- The Sidebar plugin's `shadow` turns shadows on the same way when it loads
 -- first (SIDEBAR_SHADOW): the glow's look wins, sidebars sharing it.
+-- With the Window Style plugin, shadows (and how pinned windows look) are its.
 local glowing = false
-if config.glow and (not hl.get_config("decoration:shadow:enabled") or SIDEBAR_SHADOW) then
+if type(window_style) == "table" and window_style.look then
+  -- nothing
+elseif config.glow and (not hl.get_config("decoration:shadow:enabled") or SIDEBAR_SHADOW) then
   local active = theme_border("general:col.active_border")
   local rgb = active and active:match("^rgba%((%x%x%x%x%x%x)")
   if rgb then
@@ -424,6 +427,24 @@ end
 local restored_file = state_root .. "/restored-borders"
 
 local function style(window)
+  -- The Window Style plugin's look for pinned windows, if it's installed.
+  local look = type(window_style) == "table" and window_style.look and window_style.look("pinned")
+  if look then
+    local function set(prop, v)
+      dispatch_for(window, hl.dsp.window.set_prop, { prop = prop, value = v })
+    end
+    -- Explicitly off without one: pinned windows float, and floating windows
+    -- may have one by rule.
+    set("no_shadow", look.shadow and "0" or "1")
+    set("border_size", look.border_size and tostring(look.border_size) or "unset")
+    if look.rounding then
+      set("rounding", tostring(look.rounding))
+    end
+    if look.active or look.inactive then
+      set_border(window, look.active, look.inactive or look.active)
+    end
+    return
+  end
   if no_border then
     dispatch_for(window, hl.dsp.window.set_prop, { prop = "border_size", value = "0" })
   else
@@ -443,6 +464,7 @@ end
 local function unstyle(window)
   -- Unlike a colour, a size can be handed back to the config.
   dispatch_for(window, hl.dsp.window.set_prop, { prop = "border_size", value = "unset" })
+  dispatch_for(window, hl.dsp.window.set_prop, { prop = "rounding", value = "unset" })
   dispatch_for(window, hl.dsp.window.set_prop, { prop = "no_shadow", value = "unset" })
   -- The theme's colours, also after border = "none" (a window pinned with a
   -- coloured border keeps that colour, unseen, until now).
@@ -2046,6 +2068,16 @@ end
 
 -- For scripting and tests: `hyprctl eval 'dock.toggle()'` etc.
 dock = {
+  -- Every pinned window styled again (the Window Style plugin calls this when
+  -- it loads, or a look changes).
+  restyle = function()
+    for address in pairs(pinned) do
+      local window = current(address)
+      if window then
+        style(window)
+      end
+    end
+  end,
   -- Every pinned window placed again (after changing gaps, say).
   refresh = function()
     for address in pairs(pinned) do
