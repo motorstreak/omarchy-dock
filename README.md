@@ -99,6 +99,11 @@ the bar reserves its space, so your monitor settings are never changed.
 
 ## Configure
 
+With the [Window Style plugin](https://github.com/motorstreak/omarchy-window-style)
+installed, pinned windows' border, rounding and shadow (the glow) are set in its
+panel instead (its Pinned tab), and the `border` and `glow` options below are
+left aside.
+
 Create `~/.config/omarchy/dock.lua` returning the options to change, then
 reload Hyprland (`hyprctl reload`). All options, with their defaults:
 
