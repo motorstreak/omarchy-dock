@@ -1423,8 +1423,13 @@ local function sync_keys()
   end
   for _, k in ipairs(dock_keys) do
     hl.unbind(k[1])
+    -- The Sidebar plugin's `floating_keys` also places floating windows with
+    -- some of them: back to its handler, not to Omarchy.
+    local theirs = not want and sidebar and sidebar.floating_key and sidebar.floating_key(k[1])
     if want then
       o.bind(k[1], k[2] .. " (pinned window)", guard("the pinned window", k[4]))
+    elseif theirs then
+      o.bind(k[1], k[2], theirs)
     else
       o.bind(k[1], k[2], k[3], k[5])
     end
