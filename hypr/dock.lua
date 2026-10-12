@@ -184,6 +184,35 @@ do
   end
 end
 
+-- Where a floating window was, by address { x, y, w, h }, when it was pinned:
+-- unpinned, it floats there again rather than staying at the edge. Kept in a
+-- file too, as a Hyprland reload runs this file afresh.
+local floated = {}
+local floated_file = state_root .. "/floated"
+
+do
+  local f = io.open(floated_file, "r")
+  if f then
+    for line in f:lines() do
+      local address, x, y, w, h = line:match("^(%S+) (%-?%d+) (%-?%d+) (%d+) (%d+)$")
+      if address then
+        floated[address] = { x = tonumber(x), y = tonumber(y), w = tonumber(w), h = tonumber(h) }
+      end
+    end
+    f:close()
+  end
+end
+
+local function save_floated()
+  local f = io.open(floated_file, "w")
+  if f then
+    for address, g in pairs(floated) do
+      f:write(string.format("%s %d %d %d %d\n", address, g.x, g.y, g.w, g.h))
+    end
+    f:close()
+  end
+end
+
 -- By app: { edge, share, pos } of the last window of it pinned, its width as a
 -- share of the monitor's (so it opens in proportion on another monitor) and its
 -- place in the stack, kept while it's pinned (a logout or crash doesn't lose
@@ -924,6 +953,33 @@ local function unpin(window)
     dispatch_for(window, hl.dsp.window.float, { action = "toggle" })
   end
   unstyle(window)
+  -- Floating before: back where it was, once unpinning has settled.
+  local g = floated[window.address]
+  if g then
+    floated[window.address] = nil
+    save_floated()
+  end
+  if p.was_floating then
+    local address = window.address
+    hl.timer(guard("placing the unpinned window", function()
+      local now = current(address)
+      if now == nil or pinned[address] or not now.floating then
+        return
+      end
+      -- Its old place on the monitor it's on now, or the middle of it.
+      local m = now.monitor
+      local mw, mh = 0, 0
+      if m then
+        mw, mh = logical_size(m)
+      end
+      if g and m and g.x >= m.x and g.y >= m.y and g.x + g.w <= m.x + mw and g.y + g.h <= m.y + mh then
+        dispatch_for(now, hl.dsp.window.resize, { x = g.w, y = g.h })
+        dispatch_for(now, hl.dsp.window.move, { x = g.x, y = g.y })
+      else
+        dispatch_for(now, hl.dsp.window.center, {})
+      end
+    end), { timeout = 50, type = "oneshot" })
+  end
 end
 
 -- The screen edge a window is nearer to, the width it would be pinned at (its
@@ -968,6 +1024,11 @@ local function pin_here(window, edge, width, pos)
     mw = math.floor(logical_size(m)) }
   pinned[window.address] = p
   save()
+  if window.floating then
+    floated[window.address] = { x = math.floor(window.at.x), y = math.floor(window.at.y),
+      w = math.floor(window.size.x), h = math.floor(window.size.y) }
+    save_floated()
+  end
 
   if not window.floating then
     dispatch_for(window, hl.dsp.window.float, { action = "toggle" })
