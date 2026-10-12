@@ -16,7 +16,7 @@
 --                    right, as between tiled windows (ALT: a little, CTRL: a lot);
 --                    with SHIFT (height) it keeps its height
 --                    A tiled window with no tiled window beside it moves the
---                    docked stack's edge the same way (it narrows as the stack widens)
+--                    docked stack's edge the same way
 --
 -- Each app pinned is remembered, its edge and width (a share of the screen):
 -- when it next opens (its first window, on a regular workspace), it's pinned
@@ -1278,7 +1278,7 @@ end
 -- SUPER + MINUS/EQUAL on a tiled window with no tiled window beside it, which
 -- Hyprland can't resize (there's no split to move): the edge between it and a
 -- docked stack moves instead, the right one if there's one on each side. MINUS
--- narrows the window (the stack widens), as beside another tiled window.
+-- moves the edge left and EQUAL right, as between two tiled windows.
 -- False when it isn't such a window, for Hyprland's own resize.
 local function tiled_resize(dx)
   local window = hl.get_active_window()
@@ -1303,7 +1303,7 @@ local function tiled_resize(dx)
     return false
   end
   local p = list[1].p
-  set_width(p, p.width - dx)
+  set_width(p, p.edge == "right" and (p.width - dx) or (p.width + dx))
   return true
 end
 
