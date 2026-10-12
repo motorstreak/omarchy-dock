@@ -26,6 +26,7 @@ they were and the key goes away.
 | `Super + Shift + Left/Right` | With a pinned window focused: move it to that edge, into the stack there (taking its width) |
 | `Super + Shift + Up/Down` | With a pinned window focused: move it up / down its stack |
 | `Super + Minus / Equal` | With a pinned window focused: move its inner edge left / right, exactly as between two tiled windows; tiled windows grow or shrink to match (`Alt`: a little, `Ctrl`: a lot) |
+| `Super + Minus / Equal` | With a tiled window focused that has no tiled window beside it (nothing for Hyprland to resize against): move the docked stack's edge instead, the right one if both edges have one. `Minus` narrows the tiled window, `Equal` widens it |
 | `Super + drag` | A pinned window stays pinned: let go, it snaps into the stack at the edge it's nearer to (on the monitor it's dropped on), at the height it was dropped |
 | `Super + right-drag` (resize) | With a pinned window focused (hovering focuses it): its stack's inner edge follows the pointer, all its windows together, within the same limits as the keys; tiled windows follow. The stack stops at the widest minimum of its apps (1Password won't float narrower than 784 px) |
 | `Super + Shift + drag` | Moves any window; a pinned one is unpinned when let go and tiled where it's dropped |
@@ -78,7 +79,9 @@ they were and the key goes away.
   Omarchy's swap and resize keys; the dock takes them only while a pinned window
   has focus and hands them back after. Together with the
   Sidebar plugin (which takes them while a sidebar has focus), each gets them
-  in turn.
+  in turn. The width keys (`Super + [Alt/Ctrl] + Minus/Equal`) otherwise go
+  through the dock too, which does Omarchy's resize unless it's a tiled window
+  alone beside a docked stack (above).
 - On a workspace in Omarchy's scrolling layout (`Super + L`), the columns on
   screen are fitted to the space whenever pinning, unpinning or resizing changes
   it, so they stay the usual gap from the pinned windows. (Scrolling columns are

@@ -15,6 +15,8 @@
 --   SUPER + MINUS/EQUAL  (a pinned window focused) move its inner edge left /
 --                    right, as between tiled windows (ALT: a little, CTRL: a lot);
 --                    with SHIFT (height) it keeps its height
+--                    A tiled window with no tiled window beside it moves the
+--                    docked stack's edge the same way (it narrows as the stack widens)
 --
 -- Each app pinned is remembered, its edge and width (a share of the screen):
 -- when it next opens (its first window, on a regular workspace), it's pinned
@@ -1273,6 +1275,38 @@ local function resize(dx)
   end
 end
 
+-- SUPER + MINUS/EQUAL on a tiled window with no tiled window beside it, which
+-- Hyprland can't resize (there's no split to move): the edge between it and a
+-- docked stack moves instead, the right one if there's one on each side. MINUS
+-- narrows the window (the stack widens), as beside another tiled window.
+-- False when it isn't such a window, for Hyprland's own resize.
+local function tiled_resize(dx)
+  local window = hl.get_active_window()
+  if window == nil or window.floating or pinned[window.address] or (window.fullscreen or 0) ~= 0 then
+    return false
+  end
+  local m, ws = window.monitor, window.workspace and window.workspace.name
+  if m == nil or ws == nil or ws:sub(1, 8) == "special:" then
+    return false
+  end
+  for _, w in ipairs(hl.get_windows()) do
+    if w.address ~= window.address and not w.floating and w.workspace and w.workspace.name == ws
+        and (w.at.x + w.size.x <= window.at.x or w.at.x >= window.at.x + window.size.x) then
+      return false
+    end
+  end
+  local list = stack(m.name, "right")
+  if #list == 0 then
+    list = stack(m.name, "left")
+  end
+  if #list == 0 then
+    return false
+  end
+  local p = list[1].p
+  set_width(p, p.width - dx)
+  return true
+end
+
 -- The right button let go after a mouse resize (SUPER + right mouse): a docked
 -- window whose width changed gives it to its whole stack, as the keys do (an
 -- app's minimum, like 1Password's, then holds for the stack); one whose height
@@ -1482,9 +1516,9 @@ for _, step in ipairs({
 }) do
   local mods, height_mods, how, dx = step[1], step[2], step[3], step[4]
   dock_keys[#dock_keys + 1] = { "SUPER + " .. mods .. "code:20", "Expand window left" .. how,
-    hl.dsp.window.resize({ x = -dx, y = 0, relative = true }), function() resize(-dx) end }
+    hl.dsp.window.resize({ x = -dx, y = 0, relative = true }), function() resize(-dx) end, nil, -dx }
   dock_keys[#dock_keys + 1] = { "SUPER + " .. mods .. "code:21", "Shrink window left" .. how,
-    hl.dsp.window.resize({ x = dx, y = 0, relative = true }), function() resize(dx) end }
+    hl.dsp.window.resize({ x = dx, y = 0, relative = true }), function() resize(dx) end, nil, dx }
   -- With SHIFT, Omarchy's keys change the height: a pinned window always fills
   -- the height below the bar (as its strip does), so they keep it there rather
   -- than let it grow past the screen.
@@ -1494,6 +1528,23 @@ for _, step in ipairs({
     hl.dsp.window.resize({ x = 0, y = dx, relative = true }), function() keep_height() end }
 end
 local keys_taken = false
+
+-- The handler for one of Omarchy's width keys (SUPER + MINUS/EQUAL, with ALT or
+-- CTRL) on a window that isn't docked: Hyprland's resize, or the docked stack's
+-- edge for a tiled window alone across the screen (tiled_resize). Nil for any
+-- other key. The Sidebar plugin binds the keys back through this too.
+local function resize_key(keys)
+  for _, k in ipairs(dock_keys) do
+    if k[1] == keys and k[6] then
+      local dx, omarchy = k[6], k[3]
+      return guard(k[2], function()
+        if not tiled_resize(dx) then
+          hl.dispatch(omarchy)
+        end
+      end)
+    end
+  end
+end
 
 local function sync_keys()
   local window = hl.get_active_window()
@@ -1516,13 +1567,24 @@ local function sync_keys()
     elseif theirs then
       o.bind(k[1], k[2], theirs)
     else
-      o.bind(k[1], k[2], k[3], k[5])
+      o.bind(k[1], k[2], resize_key(k[1]) or k[3], k[5])
     end
   end
 end
 
 sync_keys_soon = function()
   hl.timer(guard("updating the dock keys", sync_keys), { timeout = 5, type = "oneshot" })
+end
+
+-- The width keys work for a tiled window beside a docked stack from the start
+-- (unless a sidebar with focus has its own bound).
+if omarchy_default_bindings ~= false and not (sidebar and sidebar.keys_taken and sidebar.keys_taken()) then
+  for _, k in ipairs(dock_keys) do
+    if k[6] then
+      hl.unbind(k[1])
+      o.bind(k[1], k[2], resize_key(k[1]))
+    end
+  end
 end
 
 -- When the plugin is disabled: every pinned window back to how it was.
@@ -2155,6 +2217,8 @@ dock = {
   mouse_resize_stop = end_mouse_resize,
   move = move,
   resize = resize,
+  resize_key = resize_key,
+  tiled_resize = tiled_resize,
   release = release,
   sync = sync,
 }
