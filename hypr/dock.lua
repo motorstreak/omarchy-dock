@@ -399,6 +399,13 @@ local function stack(monitor, edge)
   return list
 end
 
+-- A stack whose windows change shares its height equally again.
+local function reshare(monitor, edge)
+  for _, e in ipairs(stack(monitor, edge)) do
+    e.p.set_h = nil
+  end
+end
+
 -- Borders ------------------------------------------------------------------------
 
 local no_border = config.border == "none"
@@ -986,6 +993,7 @@ local function unpin(window)
     return
   end
   pinned[window.address] = nil
+  reshare(p.monitor, p.edge)
   save()
   sync()
   place_stack(p.monitor, p.edge)
@@ -1065,6 +1073,7 @@ local function pin_here(window, edge, width, pos)
 
   local p = { edge = edge, monitor = m.name, width = width, was_floating = window.floating == true, pos = pos,
     mw = math.floor(logical_size(m)) }
+  reshare(m.name, edge)
   pinned[window.address] = p
   save()
   if window.floating then
@@ -1217,6 +1226,8 @@ local function move(direction)
   end
   local from = p.edge
   local others = stack(p.monitor, edge)
+  reshare(p.monitor, from)
+  reshare(p.monitor, edge)
   p.edge = edge
   if #others > 0 then
     p.width = others[1].p.width
@@ -1282,6 +1293,8 @@ local function gather(direction)
   local edge = direction == "l" and "left" or "right"
   local width = p.width
   local moved = false
+  reshare(p.monitor, "left")
+  reshare(p.monitor, "right")
   for _, e in ipairs(stack(p.monitor, edge == "left" and "right" or "left")) do
     -- Below the ones there already.
     e.p.edge, e.p.pos = edge, e.p.pos + 1
@@ -1401,7 +1414,8 @@ local function set_height(dy)
   local avail = stack_height(m) - (#list - 1) * inner_gap()
   local most = avail - (#list - 1) * MIN_SLOT
   local h = (p.set_h or (p.placed_h and p.placed_h + 2 * border()) or math.floor(avail / #list)) + dy
-  if h >= most then
+  -- Within a border's width of all the room there is: as tall as it goes.
+  if h >= most - 2 * border() - 4 then
     p.set_h = #list == 1 and nil or most
   else
     p.set_h = math.floor(math.max(h, MIN_SLOT))
