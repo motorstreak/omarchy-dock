@@ -1643,6 +1643,9 @@ end
 
 -- Omarchy's keys a pinned window uses while it has focus: { keys, Omarchy's
 -- description, Omarchy's action, ours, Omarchy's bind options }.
+-- Defined below (Under sidebars, the scratchpad and fullscreen windows).
+local fullscreen_dock
+
 local dock_keys = {
   { "SUPER + SHIFT + LEFT", "Swap window to the left", hl.dsp.window.swap({ direction = "l" }), function() move("l") end },
   { "SUPER + SHIFT + RIGHT", "Swap window to the right", hl.dsp.window.swap({ direction = "r" }), function() move("r") end },
@@ -1655,6 +1658,7 @@ local dock_keys = {
   { "SUPER + DOWN", "Focus on below window", hl.dsp.focus({ direction = "d" }), function() focus_dock("d") end },
   { "SUPER + ALT + LEFT", "Move window to group on left", hl.dsp.window.move({ into_group = "l" }), function() gather("l") end },
   { "SUPER + ALT + RIGHT", "Move window to group on right", hl.dsp.window.move({ into_group = "r" }), function() gather("r") end },
+  { "SUPER + F", "Full screen", hl.dsp.window.fullscreen({ mode = "fullscreen" }), function() fullscreen_dock() end },
 }
 -- Spelled exactly as Omarchy binds them (default/hypr/bindings/tiling.lua):
 -- unbinding goes by the spelling, modifier order included.
@@ -1849,6 +1853,33 @@ end
 
 -- Back from the screensaver under a sidebar still shown: under it again.
 after_unpark = sync_specials
+
+-- SUPER + F on a docked window: full screen, and back to its place in the
+-- stack. Hyprland won't put a pinned window in full screen, so it's unpinned
+-- first, as the ones under a full screen window are (above), and pinned and
+-- placed again with them once it leaves full screen.
+fullscreen_dock = function()
+  local window = hl.get_active_window()
+  if window == nil or pinned[window.address] == nil then
+    hl.dispatch(hl.dsp.window.fullscreen({ mode = "fullscreen" }))
+    return
+  end
+  if (window.fullscreen or 0) ~= 0 then
+    dispatch_for(window, hl.dsp.window.fullscreen, { mode = "fullscreen" })
+    return
+  end
+  if window.pinned then
+    dispatch_for(window, hl.dsp.window.pin, {})
+    submerged[window.address] = true
+  end
+  local address = window.address
+  hl.timer(guard("putting the docked window in full screen", function()
+    local now = current(address)
+    if now and pinned[address] and not now.pinned then
+      dispatch_for(now, hl.dsp.window.fullscreen, { mode = "fullscreen" })
+    end
+  end), { timeout = 20, type = "oneshot" })
+end
 
 -- Once Hyprland has finished what set it off (a window going full screen, a
 -- workspace switch).
