@@ -25,12 +25,15 @@ they were and the key goes away.
 | `Super + Alt + P` | Pin the focused window to the screen edge it's nearer to, or unpin a pinned one |
 | `Super + Shift + Left/Right` | With a pinned window focused: move it to that edge, into the stack there (taking its width) |
 | `Super + Shift + Up/Down` | With a pinned window focused: move it up / down its stack |
-| `Super + Minus / Equal` | With a pinned window focused: move its inner edge left / right, exactly as between two tiled windows; tiled windows grow or shrink to match (`Alt`: a little, `Ctrl`: a lot) |
-| `Super + Minus / Equal` | With a tiled window focused that has no tiled window beside it (nothing for Hyprland to resize against): move the docked stack's edge instead, the right one if both edges have one. `Minus` moves the edge left, `Equal` right, as between two tiled windows |
+| `Super + arrows` | With a pinned window focused: focus the next docked window that way, up / down its stack or across to the other edge's stack. None there: Omarchy's focus, to the window beside it |
+| `Super + Alt + Left/Right` | With a pinned window focused: gather every docked window on its monitor into one stack on that edge, at this window's width |
+| `Super + Minus / Equal` | With a pinned window focused: narrower / wider (its whole stack); tiled windows grow or shrink to match (`Alt`: a little, `Ctrl`: a lot) |
+| `Super + Shift + Minus / Equal` | With a pinned window focused: shorter / taller. In a stack the others share what's left; alone, it stays at the top under the bar. Back to full height (or an equal share), it shares again |
+| `Super + Minus / Equal` | With a tiled window focused that has no tiled window beside it (nothing for Hyprland to resize against): narrower / wider, moving the docked stack's edge (the right one if both edges have one) |
+| `Super + F` | Omarchy's fullscreen, and back to docked |
 | `Super + drag` | A pinned window stays pinned: let go, it snaps into the stack at the edge it's nearer to (on the monitor it's dropped on), at the height it was dropped |
 | `Super + right-drag` (resize) | With a pinned window focused (hovering focuses it): its stack's inner edge follows the pointer, all its windows together, within the same limits as the keys; tiled windows follow. The stack stops at the widest minimum of its apps (1Password won't float narrower than 784 px) |
 | `Super + Shift + drag` | Moves any window; a pinned one is unpinned when let go and tiled where it's dropped |
-| `Super + Shift + Minus / Equal` | With a pinned window focused: nothing. It always fills the height below the bar (or its share of a stack), so it can't grow past the screen |
 
 - Pinned windows have the usual border in the theme's cyan, so they're easy to
   tell from other windows (and from sidebars, which use the theme's green).
@@ -75,9 +78,10 @@ they were and the key goes away.
 - Works with sidebars from the [Sidebar](https://github.com/motorstreak/omarchy-sidebar)
   plugin: pinning one turns it into an ordinary window, pinned. To make it a
   sidebar again, unpin it and press `Super + Alt + B`.
-- `Super + Shift + arrows` and `Super + [Shift/Alt/Ctrl] + Minus/Equal` are
-  Omarchy's swap and resize keys; the dock takes them only while a pinned window
-  has focus and hands them back after. Together with the
+- `Super + arrows`, `Super + Shift + arrows`, `Super + Alt + Left/Right` and
+  `Super + [Shift/Alt/Ctrl] + Minus/Equal` are Omarchy's focus, swap, group and
+  resize keys; the dock takes them only while a pinned window has focus (doing
+  what they do on a window, made to fit a docked one) and hands them back after. Together with the
   Sidebar plugin (which takes them while a sidebar has focus), each gets them
   in turn. The width keys (`Super + [Alt/Ctrl] + Minus/Equal`) otherwise go
   through the dock too, which does Omarchy's resize unless it's a tiled window

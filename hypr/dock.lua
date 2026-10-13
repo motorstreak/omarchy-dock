@@ -12,11 +12,13 @@
 --   SUPER + SHIFT + LEFT/RIGHT  (a pinned window focused) move it to that edge,
 --                    into the stack there
 --   SUPER + SHIFT + UP/DOWN  (a pinned window focused) move it up / down its stack
---   SUPER + MINUS/EQUAL  (a pinned window focused) move its inner edge left /
---                    right, as between tiled windows (ALT: a little, CTRL: a lot);
---                    with SHIFT (height) it keeps its height
---                    A tiled window with no tiled window beside it moves the
---                    docked stack's edge the same way
+--   SUPER + ARROWS   (a pinned window focused) focus the next docked window that way
+--   SUPER + ALT + LEFT/RIGHT  (a pinned window focused) gather every docked
+--                    window on that edge, at this one's width
+--   SUPER + MINUS/EQUAL  (a pinned window focused) narrower / wider, its whole
+--                    stack (ALT: a little, CTRL: a lot); with SHIFT, shorter /
+--                    taller in its stack. A tiled window with no tiled window
+--                    beside it: narrower / wider against the docked stack
 --
 -- Each app pinned is remembered, its edge and width (a share of the screen):
 -- when it next opens (its first window, on a regular workspace), it's pinned
@@ -215,6 +217,24 @@ local function save_floated()
   end
 end
 
+-- Heights set with SUPER + SHIFT + MINUS/EQUAL, by address (p.set_h, layout
+-- pixels): the window keeps that height in its stack, the others share the
+-- rest. Without one it shares the height equally. Saved along with `pinned`.
+local heights_file = state_root .. "/heights"
+
+do
+  local f = io.open(heights_file, "r")
+  if f then
+    for line in f:lines() do
+      local address, h = line:match("^(%S+) (%d+)$")
+      if address and pinned[address] then
+        pinned[address].set_h = tonumber(h)
+      end
+    end
+    f:close()
+  end
+end
+
 -- By app: { edge, share, pos } of the last window of it pinned, its width as a
 -- share of the monitor's (so it opens in proportion on another monitor) and its
 -- place in the stack, kept while it's pinned (a logout or crash doesn't lose
@@ -275,7 +295,20 @@ local function forget(window)
   end
 end
 
+local function save_heights()
+  local f = io.open(heights_file, "w")
+  if f then
+    for address, p in pairs(pinned) do
+      if p.set_h then
+        f:write(string.format("%s %d\n", address, p.set_h))
+      end
+    end
+    f:close()
+  end
+end
+
 local function save()
+  save_heights()
   local f = io.open(pinned_file, "w")
   if f then
     for address, p in pairs(pinned) do
@@ -573,6 +606,14 @@ local MIN_SLOT = 100
 local function slots(list, avail, gap)
   local n = #list
   local fixed, free, rest = {}, avail - (n - 1) * gap, n
+  -- Heights set with the keys first, kept to what leaves the others MIN_SLOT.
+  for k, e in ipairs(list) do
+    if e.p.set_h and (rest > 1 or n == 1) then
+      local h = math.max(math.min(e.p.set_h, free - (rest - 1) * MIN_SLOT), MIN_SLOT, e.p.min_h or 0)
+      fixed[k] = h
+      free, rest = free - h, rest - 1
+    end
+  end
   local changed = true
   while changed and rest > 0 do
     changed = false
@@ -1196,6 +1237,77 @@ local function move(direction)
   place_stack(p.monitor, edge)
 end
 
+-- SUPER + arrows on a docked window: focus the next docked window that way, up
+-- or down its stack, or across to the other edge's stack (the one level with
+-- it). None there: Omarchy's focus, to the windows beside it.
+local function focus_dock(direction)
+  local window = hl.get_active_window()
+  local p = window and pinned[window.address]
+  if p == nil then
+    return
+  end
+  local target = nil
+  if direction == "u" or direction == "d" then
+    local list = stack(p.monitor, p.edge)
+    for k, e in ipairs(list) do
+      if e.address == window.address then
+        target = list[direction == "u" and k - 1 or k + 1]
+      end
+    end
+  elseif (direction == "l") == (p.edge == "right") then
+    local best = nil
+    for _, e in ipairs(stack(p.monitor, p.edge == "right" and "left" or "right")) do
+      local d = math.abs(e.p.pos - p.pos)
+      if best == nil or d < best then
+        best, target = d, e
+      end
+    end
+  end
+  if target then
+    hl.dispatch(hl.dsp.focus({ window = "address:" .. target.address }))
+  else
+    hl.dispatch(hl.dsp.focus({ direction = direction }))
+  end
+end
+
+-- SUPER + ALT + LEFT/RIGHT on a docked window: every docked window on its
+-- monitor gathers on that edge, in one stack at this window's width (or as
+-- wide as there's room for).
+local function gather(direction)
+  local window = hl.get_active_window()
+  local p = window and pinned[window.address]
+  if p == nil then
+    return
+  end
+  local edge = direction == "l" and "left" or "right"
+  local width = p.width
+  local moved = false
+  for _, e in ipairs(stack(p.monitor, edge == "left" and "right" or "left")) do
+    -- Below the ones there already.
+    e.p.edge, e.p.pos = edge, e.p.pos + 1
+    moved = true
+  end
+  for _, e in ipairs(stack(p.monitor, edge)) do
+    e.p.width = width
+  end
+  local most = max_width(p.monitor, edge)
+  if width > most then
+    for _, e in ipairs(stack(p.monitor, edge)) do
+      e.p.width = math.max(most, MIN_WIDTH)
+    end
+  end
+  -- Positions back to shares of the height, in their new order.
+  local list = stack(p.monitor, edge)
+  for k, e in ipairs(list) do
+    e.p.pos = (k - 0.5) / #list
+  end
+  save()
+  sync()
+  place_stack(p.monitor, "left")
+  place_stack(p.monitor, "right")
+  announce(moved and ("Gathered on the " .. edge) or ("All docked on the " .. edge))
+end
+
 -- Omarchy's swap and resize keys, which move and resize a pinned window instead
 -- while one has focus. The Sidebar plugin takes the same keys while a sidebar
 -- has focus and binds
@@ -1271,14 +1383,37 @@ local function resize(dx)
   local window = hl.get_active_window()
   local p = window and pinned[window.address]
   if p then
-    set_width(p, p.edge == "right" and (p.width - dx) or (p.width + dx))
+    set_width(p, p.width + dx)
   end
+end
+
+-- SUPER + SHIFT + MINUS/EQUAL on a docked window: shorter / taller. In a stack
+-- the others share what's left; alone, it stays at the top, under the bar.
+-- Back to the full height (or an equal share), it shares again.
+local function set_height(dy)
+  local window = hl.get_active_window()
+  local p = window and pinned[window.address]
+  local m = p and monitor_named(p.monitor)
+  if m == nil then
+    return
+  end
+  local list = stack(p.monitor, p.edge)
+  local avail = stack_height(m) - (#list - 1) * inner_gap()
+  local most = avail - (#list - 1) * MIN_SLOT
+  local h = (p.set_h or (p.placed_h and p.placed_h + 2 * border()) or math.floor(avail / #list)) + dy
+  if h >= most then
+    p.set_h = #list == 1 and nil or most
+  else
+    p.set_h = math.floor(math.max(h, MIN_SLOT))
+  end
+  save()
+  place_stack(p.monitor, p.edge)
 end
 
 -- SUPER + MINUS/EQUAL on a tiled window with no tiled window beside it, which
 -- Hyprland can't resize (there's no split to move): the edge between it and a
 -- docked stack moves instead, the right one if there's one on each side. MINUS
--- moves the edge left and EQUAL right, as between two tiled windows.
+-- makes the tiled window narrower (the stack wider), EQUAL wider.
 -- False when it isn't such a window, for Hyprland's own resize.
 local function tiled_resize(dx)
   local window = hl.get_active_window()
@@ -1303,7 +1438,7 @@ local function tiled_resize(dx)
     return false
   end
   local p = list[1].p
-  set_width(p, p.edge == "right" and (p.width - dx) or (p.width + dx))
+  set_width(p, p.width - dx)
   return true
 end
 
@@ -1425,15 +1560,6 @@ local function dropped()
   end
 end
 
--- A pinned window's height keys: it keeps its height (its share of the stack), in place.
-local function keep_height()
-  local window = hl.get_active_window()
-  local p = window and pinned[window.address]
-  if p then
-    place(window, p)
-  end
-end
-
 -- SUPER + right mouse on a docked window (the dock's bind while one has focus,
 -- see dock_keys): its stack's inner edge follows the pointer, within the same
 -- limits as the keys, until the button is let go. Hyprland reports no pointer
@@ -1506,6 +1632,12 @@ local dock_keys = {
   { "SUPER + SHIFT + UP", "Swap window up", hl.dsp.window.swap({ direction = "u" }), function() move("u") end },
   { "SUPER + SHIFT + DOWN", "Swap window down", hl.dsp.window.swap({ direction = "d" }), function() move("d") end },
   { "SUPER + mouse:273", "Resize window", hl.dsp.window.resize(), function() start_mouse_resize() end, { mouse = true } },
+  { "SUPER + LEFT", "Focus on left window", hl.dsp.focus({ direction = "l" }), function() focus_dock("l") end },
+  { "SUPER + RIGHT", "Focus on right window", hl.dsp.focus({ direction = "r" }), function() focus_dock("r") end },
+  { "SUPER + UP", "Focus on above window", hl.dsp.focus({ direction = "u" }), function() focus_dock("u") end },
+  { "SUPER + DOWN", "Focus on below window", hl.dsp.focus({ direction = "d" }), function() focus_dock("d") end },
+  { "SUPER + ALT + LEFT", "Move window to group on left", hl.dsp.window.move({ into_group = "l" }), function() gather("l") end },
+  { "SUPER + ALT + RIGHT", "Move window to group on right", hl.dsp.window.move({ into_group = "r" }), function() gather("r") end },
 }
 -- Spelled exactly as Omarchy binds them (default/hypr/bindings/tiling.lua):
 -- unbinding goes by the spelling, modifier order included.
@@ -1519,13 +1651,11 @@ for _, step in ipairs({
     hl.dsp.window.resize({ x = -dx, y = 0, relative = true }), function() resize(-dx) end, nil, -dx }
   dock_keys[#dock_keys + 1] = { "SUPER + " .. mods .. "code:21", "Shrink window left" .. how,
     hl.dsp.window.resize({ x = dx, y = 0, relative = true }), function() resize(dx) end, nil, dx }
-  -- With SHIFT, Omarchy's keys change the height: a pinned window always fills
-  -- the height below the bar (as its strip does), so they keep it there rather
-  -- than let it grow past the screen.
+  -- With SHIFT, the height: its share of the stack, or below the bar alone.
   dock_keys[#dock_keys + 1] = { "SUPER + " .. height_mods .. "code:20", "Shrink window up" .. how,
-    hl.dsp.window.resize({ x = 0, y = -dx, relative = true }), function() keep_height() end }
+    hl.dsp.window.resize({ x = 0, y = -dx, relative = true }), function() set_height(-dx) end }
   dock_keys[#dock_keys + 1] = { "SUPER + " .. height_mods .. "code:21", "Expand window down" .. how,
-    hl.dsp.window.resize({ x = 0, y = dx, relative = true }), function() keep_height() end }
+    hl.dsp.window.resize({ x = 0, y = dx, relative = true }), function() set_height(dx) end }
 end
 local keys_taken = false
 
