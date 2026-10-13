@@ -1785,15 +1785,23 @@ end
 local keys_taken = false
 
 -- The handler for one of Omarchy's width keys (SUPER + MINUS/EQUAL, with ALT or
--- CTRL) on a window that isn't docked: Hyprland's resize, or the docked stack's
--- edge for a tiled window alone across the screen (tiled_resize). Nil for any
+-- CTRL) on a window that isn't docked: the docked stack's edge for a tiled
+-- window alone across the screen (tiled_resize), the Sidebar plugin's for a
+-- floating one (with its `floating_keys`), else Hyprland's resize. Nil for any
 -- other key. The Sidebar plugin binds the keys back through this too.
 local function resize_key(keys)
   for _, k in ipairs(dock_keys) do
     if k[1] == keys and k[6] then
       local dx, omarchy = k[6], k[3]
       return guard(k[2], function()
-        if not tiled_resize(dx) then
+        if tiled_resize(dx) then
+          return
+        end
+        -- A floating window: the Sidebar plugin's (with `floating_keys`).
+        local theirs = sidebar and sidebar.floating_key and sidebar.floating_key(keys)
+        if theirs then
+          theirs()
+        else
           hl.dispatch(omarchy)
         end
       end)
