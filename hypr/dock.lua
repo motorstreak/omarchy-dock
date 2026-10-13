@@ -16,7 +16,8 @@
 --   SUPER + ALT + LEFT/RIGHT  (a pinned window focused) gather every docked
 --                    window on that edge, at this one's width; (a tiled window
 --                    focused) its workspace's tiled windows in a column on
---                    that side, the other half left free, and back
+--                    that side, the other half left free, and back; UP/DOWN
+--                    (a tiled window focused) in a row on the top / bottom
 --   SUPER + MINUS/EQUAL  (a pinned window focused) narrower / wider, its whole
 --                    stack (ALT: a little, CTRL: a lot); with SHIFT, shorter /
 --                    taller in its stack. A tiled window with no tiled window
@@ -1433,10 +1434,11 @@ end
 -- workspace gather in a column on that side, stacked top to bottom, half of the
 -- space between the docked strips left free on the other (a wider outer gap
 -- there, as a workspace rule); against a docked stack on that side, they tile
--- next to it. The same arrow again: back to filling the space, side by side.
+-- next to it. UP/DOWN: in a row along the top or bottom, side by side, the
+-- other half free. The same arrow again: back to filling the space.
 -- Remembered per workspace in a file, as a Hyprland reload drops workspace
 -- rules.
-local gathered = {} -- workspace name -> "left" | "right"
+local gathered = {} -- workspace name -> { side = "left" | "right" | "top" | "bottom", free }
 local gathered_file = state_root .. "/gathered"
 
 do
@@ -1444,7 +1446,7 @@ do
   if f then
     for line in f:lines() do
       local ws, side, free = line:match("^(%S+) (%a+) (%d+)$")
-      if ws and (side == "left" or side == "right") then
+      if ws and (side == "left" or side == "right" or side == "top" or side == "bottom") then
         gathered[ws] = { side = side, free = tonumber(free) }
       end
     end
@@ -1469,8 +1471,12 @@ local function apply_gather(ws)
   local g = gathered[ws]
   if g and g.side == "left" then
     right = right + g.free
-  elseif g then
+  elseif g and g.side == "right" then
     left = left + g.free
+  elseif g and g.side == "top" then
+    bottom = bottom + g.free
+  elseif g then
+    top = top + g.free
   end
   -- Omarchy keeps dwindle's splits as they are (`preserve_split`), so two
   -- windows side by side would stay so in the column: off while the space
@@ -1497,13 +1503,15 @@ local function tiled_gather(direction)
   if m == nil or ws == nil or ws:sub(1, 8) == "special:" then
     return false
   end
-  local side = direction == "l" and "left" or "right"
+  local side = ({ l = "left", r = "right", u = "top", d = "bottom" })[direction]
   if gathered[ws] and gathered[ws].side == side then
     gathered[ws] = nil
     announce("Tiled across the screen")
   else
     local r = m.reserved or {}
-    local space = logical_size(m) - (r.left or 0) - (r.right or 0)
+    local mw, mh = logical_size(m)
+    local space = (side == "left" or side == "right") and (mw - (r.left or 0) - (r.right or 0))
+      or (mh - (r.top or 0) - (r.bottom or 0))
     gathered[ws] = { side = side, free = math.floor(space / 2) }
     announce("Tiled on the " .. side)
   end
@@ -1749,6 +1757,11 @@ local dock_keys = {
     nil, nil, "l" },
   { "SUPER + ALT + RIGHT", "Move window to group on right", hl.dsp.window.move({ into_group = "r" }), function() gather("r") end,
     nil, nil, "r" },
+  -- (A docked window has no top or bottom to gather on: Omarchy's.)
+  { "SUPER + ALT + UP", "Move window to group on top", hl.dsp.window.move({ into_group = "u" }),
+    function() hl.dispatch(hl.dsp.window.move({ into_group = "u" })) end, nil, nil, "u" },
+  { "SUPER + ALT + DOWN", "Move window to group on bottom", hl.dsp.window.move({ into_group = "d" }),
+    function() hl.dispatch(hl.dsp.window.move({ into_group = "d" })) end, nil, nil, "d" },
   { "SUPER + F", "Full screen", hl.dsp.window.fullscreen({ mode = "fullscreen" }), function() fullscreen_dock() end },
 }
 -- Spelled exactly as Omarchy binds them (default/hypr/bindings/tiling.lua):
@@ -1788,7 +1801,7 @@ local function resize_key(keys)
   end
 end
 
--- The handler for SUPER + ALT + LEFT/RIGHT on a window that isn't docked: a
+-- The handler for SUPER + ALT + arrows on a window that isn't docked: a
 -- tiled window gathers its workspace's windows on that side (tiled_gather);
 -- any other gets the Sidebar plugin's handler (with its `floating_keys`), or
 -- Omarchy's move into a group. Nil for any other key. The Sidebar plugin binds
