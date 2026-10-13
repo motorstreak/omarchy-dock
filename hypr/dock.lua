@@ -1416,7 +1416,10 @@ local function set_height(dy)
   local h = (p.set_h or (p.placed_h and p.placed_h + 2 * border()) or math.floor(avail / #list)) + dy
   -- Within a border's width of all the room there is: as tall as it goes.
   if h >= most - 2 * border() - 4 then
-    p.set_h = #list == 1 and nil or most
+    p.set_h = nil
+    if #list > 1 then
+      p.set_h = most
+    end
   else
     p.set_h = math.floor(math.max(h, MIN_SLOT))
   end
