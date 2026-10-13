@@ -15,8 +15,8 @@
 --   SUPER + ARROWS   (a pinned window focused) focus the next docked window that way
 --   SUPER + ALT + LEFT/RIGHT  (a pinned window focused) gather every docked
 --                    window on that edge, at this one's width; (a tiled window
---                    focused) its workspace's tiled windows on that side, a
---                    third of the space left free on the other, and back
+--                    focused) its workspace's tiled windows in a column on
+--                    that side, the other half left free, and back
 --   SUPER + MINUS/EQUAL  (a pinned window focused) narrower / wider, its whole
 --                    stack (ALT: a little, CTRL: a lot); with SHIFT, shorter /
 --                    taller in its stack. A tiled window with no tiled window
@@ -1430,11 +1430,12 @@ local function set_height(dy)
 end
 
 -- SUPER + ALT + LEFT/RIGHT on a tiled window: the tiled windows of its
--- workspace gather on that side, leaving a third of the space between the
--- docked strips free on the other (a wider outer gap there, as a workspace
--- rule); against a docked stack on that side, they tile next to it. The same
--- arrow again: back to filling the space. Remembered per workspace in a file,
--- as a Hyprland reload drops workspace rules.
+-- workspace gather in a column on that side, stacked top to bottom, half of the
+-- space between the docked strips left free on the other (a wider outer gap
+-- there, as a workspace rule); against a docked stack on that side, they tile
+-- next to it. The same arrow again: back to filling the space, side by side.
+-- Remembered per workspace in a file, as a Hyprland reload drops workspace
+-- rules.
 local gathered = {} -- workspace name -> "left" | "right"
 local gathered_file = state_root .. "/gathered"
 
@@ -1471,7 +1472,20 @@ local function apply_gather(ws)
   elseif g then
     left = left + g.free
   end
+  -- Omarchy keeps dwindle's splits as they are (`preserve_split`), so two
+  -- windows side by side would stay so in the column: off while the space
+  -- changes, each split is picked again from its new shape (a tall column
+  -- stacks them, the whole width puts them side by side), then on again.
+  local keep = hl.get_config("dwindle:preserve_split") == true
+  if keep then
+    hl.config({ dwindle = { preserve_split = false } })
+  end
   hl.workspace_rule({ workspace = ws, gaps_out = { top = top, right = right, bottom = bottom, left = left } })
+  if keep then
+    hl.timer(guard("keeping the splits", function()
+      hl.config({ dwindle = { preserve_split = true } })
+    end), { timeout = 100, type = "oneshot" })
+  end
 end
 
 local function tiled_gather(direction)
@@ -1490,7 +1504,7 @@ local function tiled_gather(direction)
   else
     local r = m.reserved or {}
     local space = logical_size(m) - (r.left or 0) - (r.right or 0)
-    gathered[ws] = { side = side, free = math.floor(space / 3) }
+    gathered[ws] = { side = side, free = math.floor(space / 2) }
     announce("Tiled on the " .. side)
   end
   save_gathered()
