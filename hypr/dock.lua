@@ -14,7 +14,9 @@
 --   SUPER + SHIFT + UP/DOWN  (a pinned window focused) move it up / down its stack
 --   SUPER + ARROWS   (a pinned window focused) focus the next docked window that way
 --   SUPER + ALT + LEFT/RIGHT  (a pinned window focused) gather every docked
---                    window on that edge, at this one's width
+--                    window on that edge, at this one's width; (a tiled window
+--                    focused) its workspace's tiled windows on that side, a
+--                    third of the space left free on the other, and back
 --   SUPER + MINUS/EQUAL  (a pinned window focused) narrower / wider, its whole
 --                    stack (ALT: a little, CTRL: a lot); with SHIFT, shorter /
 --                    taller in its stack. A tiled window with no tiled window
@@ -1427,6 +1429,79 @@ local function set_height(dy)
   place_stack(p.monitor, p.edge)
 end
 
+-- SUPER + ALT + LEFT/RIGHT on a tiled window: the tiled windows of its
+-- workspace gather on that side, leaving a third of the space between the
+-- docked strips free on the other (a wider outer gap there, as a workspace
+-- rule); against a docked stack on that side, they tile next to it. The same
+-- arrow again: back to filling the space. Remembered per workspace in a file,
+-- as a Hyprland reload drops workspace rules.
+local gathered = {} -- workspace name -> "left" | "right"
+local gathered_file = state_root .. "/gathered"
+
+do
+  local f = io.open(gathered_file, "r")
+  if f then
+    for line in f:lines() do
+      local ws, side, free = line:match("^(%S+) (%a+) (%d+)$")
+      if ws and (side == "left" or side == "right") then
+        gathered[ws] = { side = side, free = tonumber(free) }
+      end
+    end
+    f:close()
+  end
+end
+
+local function save_gathered()
+  local f = io.open(gathered_file, "w")
+  if f then
+    for ws, g in pairs(gathered) do
+      f:write(string.format("%s %s %d\n", ws, g.side, g.free))
+    end
+    f:close()
+  end
+end
+
+-- The workspace's outer gap: the config's, plus the free share on the side
+-- away from where its windows gather.
+local function apply_gather(ws)
+  local top, right, bottom, left = gaps()
+  local g = gathered[ws]
+  if g and g.side == "left" then
+    right = right + g.free
+  elseif g then
+    left = left + g.free
+  end
+  hl.workspace_rule({ workspace = ws, gaps_out = { top = top, right = right, bottom = bottom, left = left } })
+end
+
+local function tiled_gather(direction)
+  local window = hl.get_active_window()
+  if window == nil or window.floating or pinned[window.address] then
+    return false
+  end
+  local m, ws = window.monitor, window.workspace and window.workspace.name
+  if m == nil or ws == nil or ws:sub(1, 8) == "special:" then
+    return false
+  end
+  local side = direction == "l" and "left" or "right"
+  if gathered[ws] and gathered[ws].side == side then
+    gathered[ws] = nil
+    announce("Tiled across the screen")
+  else
+    local r = m.reserved or {}
+    local space = logical_size(m) - (r.left or 0) - (r.right or 0)
+    gathered[ws] = { side = side, free = math.floor(space / 3) }
+    announce("Tiled on the " .. side)
+  end
+  save_gathered()
+  apply_gather(ws)
+  return true
+end
+
+for ws in pairs(gathered) do
+  apply_gather(ws)
+end
+
 -- SUPER + MINUS/EQUAL on a tiled window with no tiled window beside it, which
 -- Hyprland can't resize (there's no split to move): the edge between it and a
 -- docked stack moves instead, the right one if there's one on each side. MINUS
@@ -1656,8 +1731,10 @@ local dock_keys = {
   { "SUPER + RIGHT", "Focus on right window", hl.dsp.focus({ direction = "r" }), function() focus_dock("r") end },
   { "SUPER + UP", "Focus on above window", hl.dsp.focus({ direction = "u" }), function() focus_dock("u") end },
   { "SUPER + DOWN", "Focus on below window", hl.dsp.focus({ direction = "d" }), function() focus_dock("d") end },
-  { "SUPER + ALT + LEFT", "Move window to group on left", hl.dsp.window.move({ into_group = "l" }), function() gather("l") end },
-  { "SUPER + ALT + RIGHT", "Move window to group on right", hl.dsp.window.move({ into_group = "r" }), function() gather("r") end },
+  { "SUPER + ALT + LEFT", "Move window to group on left", hl.dsp.window.move({ into_group = "l" }), function() gather("l") end,
+    nil, nil, "l" },
+  { "SUPER + ALT + RIGHT", "Move window to group on right", hl.dsp.window.move({ into_group = "r" }), function() gather("r") end,
+    nil, nil, "r" },
   { "SUPER + F", "Full screen", hl.dsp.window.fullscreen({ mode = "fullscreen" }), function() fullscreen_dock() end },
 }
 -- Spelled exactly as Omarchy binds them (default/hypr/bindings/tiling.lua):
@@ -1697,6 +1774,30 @@ local function resize_key(keys)
   end
 end
 
+-- The handler for SUPER + ALT + LEFT/RIGHT on a window that isn't docked: a
+-- tiled window gathers its workspace's windows on that side (tiled_gather);
+-- any other gets the Sidebar plugin's handler (with its `floating_keys`), or
+-- Omarchy's move into a group. Nil for any other key. The Sidebar plugin binds
+-- the keys back through this too.
+local function gather_key(keys)
+  for _, k in ipairs(dock_keys) do
+    if k[1] == keys and k[7] then
+      local direction, omarchy = k[7], k[3]
+      return guard(k[2], function()
+        if tiled_gather(direction) then
+          return
+        end
+        local theirs = sidebar and sidebar.floating_key and sidebar.floating_key(keys)
+        if theirs then
+          theirs()
+        else
+          hl.dispatch(omarchy)
+        end
+      end)
+    end
+  end
+end
+
 local function sync_keys()
   local window = hl.get_active_window()
   local want = window ~= nil and pinned[window.address] ~= nil and omarchy_default_bindings ~= false
@@ -1715,6 +1816,8 @@ local function sync_keys()
     local theirs = not want and sidebar and sidebar.floating_key and sidebar.floating_key(k[1])
     if want then
       o.bind(k[1], k[2] .. " (pinned window)", guard("the pinned window", k[4]))
+    elseif k[7] then
+      o.bind(k[1], k[2], gather_key(k[1]))
     elseif theirs then
       o.bind(k[1], k[2], theirs)
     else
@@ -1727,13 +1830,14 @@ sync_keys_soon = function()
   hl.timer(guard("updating the dock keys", sync_keys), { timeout = 5, type = "oneshot" })
 end
 
--- The width keys work for a tiled window beside a docked stack from the start
--- (unless a sidebar with focus has its own bound).
+-- The width keys work for a tiled window beside a docked stack, and the
+-- gather keys for tiled windows, from the start (unless a sidebar with focus
+-- has its own bound).
 if omarchy_default_bindings ~= false and not (sidebar and sidebar.keys_taken and sidebar.keys_taken()) then
   for _, k in ipairs(dock_keys) do
-    if k[6] then
+    if k[6] or k[7] then
       hl.unbind(k[1])
-      o.bind(k[1], k[2], resize_key(k[1]))
+      o.bind(k[1], k[2], resize_key(k[1]) or gather_key(k[1]))
     end
   end
 end
@@ -2402,6 +2506,8 @@ dock = {
     fullscreen_dock()
   end,
   resize_key = resize_key,
+  gather_key = gather_key,
+  tiled_gather = tiled_gather,
   tiled_resize = tiled_resize,
   release = release,
   sync = sync,

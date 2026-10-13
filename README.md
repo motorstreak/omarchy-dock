@@ -31,6 +31,7 @@ they were and the key goes away.
 | `Super + Shift + Minus / Equal` | With a pinned window focused: shorter / taller. In a stack the others share what's left; alone, it stays at the top under the bar. Back to full height (or an equal share), it shares again |
 | `Super + Minus / Equal` | With a tiled window focused that has no tiled window beside it (nothing for Hyprland to resize against): narrower / wider, moving the docked stack's edge (the right one if both edges have one) |
 | `Super + F` | Omarchy's fullscreen, and back to docked |
+| `Super + Alt + Left/Right` | With a tiled window focused: its workspace's tiled windows gather on that side, leaving a third of the space free on the other (next to a docked stack on that side, they tile beside it). The same arrow again: back to filling the screen. Remembered per workspace. (This replaces Omarchy's move into a group for left/right; `Super + Alt + Up/Down` and `Super + G` still group) |
 | `Super + drag` | A pinned window stays pinned: let go, it snaps into the stack at the edge it's nearer to (on the monitor it's dropped on), at the height it was dropped |
 | `Super + right-drag` (resize) | With a pinned window focused (hovering focuses it): its stack's inner edge follows the pointer, all its windows together, within the same limits as the keys; tiled windows follow. The stack stops at the widest minimum of its apps (1Password won't float narrower than 784 px) |
 | `Super + Shift + drag` | Moves any window; a pinned one is unpinned when let go and tiled where it's dropped |
