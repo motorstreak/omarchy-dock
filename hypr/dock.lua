@@ -2398,6 +2398,9 @@ dock = {
   set_height = set_height,
   focus = focus_dock,
   gather = gather,
+  fullscreen = function()
+    fullscreen_dock()
+  end,
   resize_key = resize_key,
   tiled_resize = tiled_resize,
   release = release,
