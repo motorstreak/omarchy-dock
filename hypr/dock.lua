@@ -1435,7 +1435,8 @@ end
 -- space between the docked strips left free on the other (a wider outer gap
 -- there, as a workspace rule); against a docked stack on that side, they tile
 -- next to it. UP/DOWN: in a row along the top or bottom, side by side, the
--- other half free. The same arrow again: back to filling the space.
+-- other half free. Gathered, LEFT or RIGHT (UP or DOWN for a row) puts them
+-- back across the space; the other pair gathers them the other way.
 -- Remembered per workspace in a file, as a Hyprland reload drops workspace
 -- rules.
 local gathered = {} -- workspace name -> { side = "left" | "right" | "top" | "bottom", free }
@@ -1504,7 +1505,11 @@ local function tiled_gather(direction)
     return false
   end
   local side = ({ l = "left", r = "right", u = "top", d = "bottom" })[direction]
-  if gathered[ws] and gathered[ws].side == side then
+  -- Gathered already: an arrow along the same line (LEFT or RIGHT for a column,
+  -- UP or DOWN for a row) puts them back across the screen; the other two
+  -- gather them the other way.
+  local across = { left = "lr", right = "lr", top = "ud", bottom = "ud" }
+  if gathered[ws] and across[gathered[ws].side] == across[side] then
     gathered[ws] = nil
     announce("Tiled across the screen")
   else
