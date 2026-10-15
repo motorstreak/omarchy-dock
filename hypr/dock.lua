@@ -601,6 +601,29 @@ local function monitor_named(name)
   end
 end
 
+-- The dock's own strip at this edge of the monitor, as Hyprland has it now
+-- (nil before the shell has drawn one): a layer surface { x, y, w, h }.
+local function strip_layer(m, edge)
+  local mw = logical_size(m)
+  for _, l in ipairs(hl.get_layers()) do
+    if l.namespace == "omarchy-dock-strip" and l.mapped and l.monitor and l.monitor.name == m.name
+        and ((l.x + l.w / 2 < m.x + mw / 2) == (edge == "left")) then
+      return l
+    end
+  end
+end
+
+-- The space others (a bar on that side) reserve at the left and right of the
+-- monitor: the reserved space without the dock's own strips.
+local function outer_sides(m)
+  local r = m.reserved or {}
+  local function without(edge, reserved)
+    local l = strip_layer(m, edge)
+    return math.max(0, (reserved or 0) - (l and l.w or 0))
+  end
+  return without("left", r.left), without("right", r.right)
+end
+
 -- Puts a pinned window in its strip, spaced like a tiled window: its border the
 -- outer gap away from the screen edges and the bar, and windows stacked on one
 -- edge the gap between tiled windows apart, sharing the height equally. (Hyprland's
@@ -679,7 +702,8 @@ local function place(window, p)
   local y = m.y + (r.top or 0) + top + s.y + b
   local height = s.h - 2 * b
   p.placed_h = math.floor(height)
-  local x = p.edge == "left" and (m.x + left + b) or (m.x + mw - right - b - p.width)
+  local outer_left, outer_right = outer_sides(m)
+  local x = p.edge == "left" and (m.x + outer_left + left + b) or (m.x + mw - outer_right - right - b - p.width)
   p.placed_x, p.placed_y = math.floor(x), math.floor(y)
   dispatch_for(window, hl.dsp.window.resize, { x = math.floor(p.width), y = math.floor(height) })
   dispatch_for(window, hl.dsp.window.move, { x = math.floor(x), y = math.floor(y) })
@@ -842,7 +866,8 @@ local function max_width(monitor, edge)
   if m == nil then
     return MIN_WIDTH
   end
-  local mw = logical_size(m)
+  local outer_left, outer_right = outer_sides(m)
+  local mw = logical_size(m) - outer_left - outer_right
   local other = stack(monitor, edge == "left" and "right" or "left")
   local taken = #other > 0 and strip_size(other[1].p) or 0
   local overhead = strip_size({ width = 0, edge = edge })
@@ -959,10 +984,9 @@ place_with_strip = function(window)
       return
     end
     local m = monitor_named(p.monitor)
-    local r = m and m.reserved or {}
-    local reserved = p.edge == "left" and r.left or r.right
+    local l = m and strip_layer(m, p.edge)
     tries = tries + 1
-    if (reserved and math.abs(reserved - strip_size(p)) < 1) or tries > 100 then
+    if (l and math.abs(l.w - strip_size(p)) < 1) or tries > 100 then
       place(now, p)
       adopt_width(address)
     else
@@ -2119,8 +2143,9 @@ local function monitor_states()
   local states = {}
   for _, m in ipairs(hl.get_monitors()) do
     local r = m.reserved or {}
-    states[m.name] = string.format("%d %d %s %d %d", m.width or 0, m.height or 0, tostring(m.scale),
-      r.top or 0, r.bottom or 0)
+    local outer_left, outer_right = outer_sides(m)
+    states[m.name] = string.format("%d %d %s %d %d %d %d", m.width or 0, m.height or 0, tostring(m.scale),
+      r.top or 0, r.bottom or 0, outer_left, outer_right)
   end
   return states
 end
