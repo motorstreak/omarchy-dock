@@ -161,6 +161,22 @@ Item {
   // send its strips again.
   Component.onCompleted: load()
 
+  // The bar moving to another edge, or changing size, sends Hyprland no event
+  // (the shell resizes the same surface), so docked windows are placed again
+  // from here, once Hyprland has the bar's new reserved space.
+  readonly property string barSpace: {
+    var config = shell && shell.barConfig
+    var bar = shell && shell.bar
+    return (config ? String(config.position || "top") : "top") + " " +
+      (bar ? bar.barSize + " " + bar.barHidden : "")
+  }
+  onBarSpaceChanged: barMoved.restart()
+  Timer {
+    id: barMoved
+    interval: 300
+    onTriggered: Quickshell.execDetached(["hyprctl", "eval", "if dock and dock.refresh then dock.refresh() end"])
+  }
+
   // Strips ---------------------------------------------------------------------
 
   // [{ monitor, edge, size }]
