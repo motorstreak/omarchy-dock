@@ -1462,17 +1462,20 @@ end
 -- other half free. Gathered, LEFT or RIGHT (UP or DOWN for a row) puts them
 -- back across the space; the other pair gathers them the other way.
 -- Remembered per workspace in a file, as a Hyprland reload drops workspace
--- rules.
-local gathered = {} -- workspace name -> { side = "left" | "right" | "top" | "bottom", free }
+-- rules. Only the side: the free half is worked out from the monitor the
+-- workspace is on each time (a workspace gathered on a 4K monitor and shown on
+-- a laptop's would otherwise keep a gap wider than the laptop's screen).
+local gathered = {} -- workspace name -> { side = "left" | "right" | "top" | "bottom", applied }
 local gathered_file = state_root .. "/gathered"
 
 do
   local f = io.open(gathered_file, "r")
   if f then
     for line in f:lines() do
-      local ws, side, free = line:match("^(%S+) (%a+) (%d+)$")
+      -- Older files have the free share in pixels after the side: ignored.
+      local ws, side = line:match("^(%S+) (%a+)")
       if ws and (side == "left" or side == "right" or side == "top" or side == "bottom") then
-        gathered[ws] = { side = side, free = tonumber(free) }
+        gathered[ws] = { side = side }
       end
     end
     f:close()
@@ -1483,10 +1486,26 @@ local function save_gathered()
   local f = io.open(gathered_file, "w")
   if f then
     for ws, g in pairs(gathered) do
-      f:write(string.format("%s %s %d\n", ws, g.side, g.free))
+      f:write(string.format("%s %s\n", ws, g.side))
     end
     f:close()
   end
+end
+
+-- Half the space between the docked strips on the workspace's monitor, across
+-- (`side` left or right) or down; 0 while the workspace has no monitor (it
+-- doesn't exist yet: applied again when it's shown).
+local function gather_free(ws, side)
+  local w = hl.get_workspace(ws)
+  local m = w and w.monitor
+  if m == nil or (m.width or 0) <= 0 or (m.height or 0) <= 0 then
+    return 0
+  end
+  local r = m.reserved or {}
+  local mw, mh = logical_size(m)
+  local space = (side == "left" or side == "right") and (mw - (r.left or 0) - (r.right or 0))
+    or (mh - (r.top or 0) - (r.bottom or 0))
+  return math.max(0, math.floor(space / 2))
 end
 
 -- The workspace's outer gap: the config's, plus the free share on the side
@@ -1494,14 +1513,21 @@ end
 local function apply_gather(ws)
   local top, right, bottom, left = gaps()
   local g = gathered[ws]
+  local free = g and gather_free(ws, g.side) or 0
+  -- Hyprland lays out only visible workspaces again: a hidden one's free half
+  -- isn't in place until it's shown (see workspace.active).
+  if g then
+    local w = hl.get_workspace(ws)
+    g.applied = w and w.visible and free or nil
+  end
   if g and g.side == "left" then
-    right = right + g.free
+    right = right + free
   elseif g and g.side == "right" then
-    left = left + g.free
+    left = left + free
   elseif g and g.side == "top" then
-    bottom = bottom + g.free
+    bottom = bottom + free
   elseif g then
-    top = top + g.free
+    top = top + free
   end
   -- Omarchy keeps dwindle's splits as they are (`preserve_split`), so two
   -- windows side by side would stay so in the column: off while the space
@@ -1537,11 +1563,7 @@ local function tiled_gather(direction)
     gathered[ws] = nil
     announce("Tiled across the screen")
   else
-    local r = m.reserved or {}
-    local mw, mh = logical_size(m)
-    local space = (side == "left" or side == "right") and (mw - (r.left or 0) - (r.right or 0))
-      or (mh - (r.top or 0) - (r.bottom or 0))
-    gathered[ws] = { side = side, free = math.floor(space / 2) }
+    gathered[ws] = { side = side }
     announce("Tiled on the " .. side)
   end
   save_gathered()
@@ -1549,9 +1571,16 @@ local function tiled_gather(direction)
   return true
 end
 
-for ws in pairs(gathered) do
-  apply_gather(ws)
+-- Those whose free half changed (a monitor's size, scale or docked strips).
+local function apply_gathers()
+  for ws, g in pairs(gathered) do
+    if g.applied ~= gather_free(ws, g.side) then
+      apply_gather(ws)
+    end
+  end
 end
+
+apply_gathers()
 
 -- SUPER + MINUS/EQUAL on a tiled window with no tiled window beside it, which
 -- Hyprland can't resize (there's no split to move): the edge between it and a
@@ -2359,6 +2388,8 @@ monitors_changed = function()
   end
   save()
   sync()
+  -- Gathered workspaces: their free half follows their monitor's new size.
+  apply_gathers()
   -- Parked for the screensaver: placed when it ends.
   if screensavers() == 0 then
     for _, st in pairs(stacks) do
@@ -2471,6 +2502,23 @@ hl.on("window.close", guard("closing a window", function(window)
   end
   -- A full screen window closing: the pinned windows come back.
   sync_specials_soon()
+end))
+
+-- A gathered workspace on another monitor, or shown after its monitor changed
+-- while it was hidden: its free half from that monitor's size.
+hl.on("workspace.move_to_monitor", guard("following a workspace", function(workspace)
+  local name = type(workspace) == "table" and workspace.name or workspace
+  if name and gathered[name] then
+    apply_gather(name)
+  end
+end))
+hl.on("workspace.active", guard("following a workspace", function(workspace)
+  local name = type(workspace) == "table" and workspace.name or workspace
+  local g = name and gathered[name]
+  -- Only when it changed: applying again picks the splits again.
+  if g and g.applied ~= gather_free(name, g.side) then
+    apply_gather(name)
+  end
 end))
 
 -- A pinned window can't be moved to another workspace while pinned; if it gets
