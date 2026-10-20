@@ -2507,13 +2507,13 @@ end))
 -- A gathered workspace on another monitor, or shown after its monitor changed
 -- while it was hidden: its free half from that monitor's size.
 hl.on("workspace.move_to_monitor", guard("following a workspace", function(workspace)
-  local name = type(workspace) == "table" and workspace.name or workspace
+  local name = workspace and workspace.name
   if name and gathered[name] then
     apply_gather(name)
   end
 end))
 hl.on("workspace.active", guard("following a workspace", function(workspace)
-  local name = type(workspace) == "table" and workspace.name or workspace
+  local name = workspace and workspace.name
   local g = name and gathered[name]
   -- Only when it changed: applying again picks the splits again.
   if g and g.applied ~= gather_free(name, g.side) then
