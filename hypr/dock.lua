@@ -802,6 +802,7 @@ end
 -- shell takes a few tens of milliseconds; checked every 2 ms, for up to 200 ms)
 -- and the tiled windows have been laid out in it, its scrolling columns fitted.
 local fit_watch = nil
+local apply_gathers
 
 local function fit_when_strips_land()
   if fit_watch then
@@ -827,6 +828,10 @@ local function fit_when_strips_land()
         for _, name in ipairs(changed) do
           fit_scrolling(name)
           fit_floating(name)
+        end
+        -- Gathered workspaces: their free half follows the docked strips.
+        if #changed > 0 then
+          apply_gathers()
         end
       end), { timeout = 20, type = "oneshot" })
     else
@@ -1572,7 +1577,7 @@ local function tiled_gather(direction)
 end
 
 -- Those whose free half changed (a monitor's size, scale or docked strips).
-local function apply_gathers()
+apply_gathers = function()
   for ws, g in pairs(gathered) do
     if g.applied ~= gather_free(ws, g.side) then
       apply_gather(ws)
