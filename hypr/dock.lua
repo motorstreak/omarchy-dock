@@ -762,13 +762,16 @@ local function fit_scrolling(name)
   hl.config({ cursor = { no_warps = no_warps == true } })
 end
 
--- Floating windows don't follow reserved space as tiled ones do, so a dock
--- covered them. Each floating window on the monitor (on any of its regular
--- workspaces) is moved inside the space beside the strips, at the outer gap,
--- and narrowed if it's wider than that space. (Undocking leaves them be.)
-local function fit_floating(name)
-  local m = monitor_named(name)
-  if m == nil then
+-- Floating windows don't follow reserved space as tiled ones do, and docked
+-- windows, being pinned, are drawn above every unpinned window, so a floating
+-- window under a dock couldn't be seen at all. Such a window (on a regular
+-- workspace of the monitor) is moved inside the space beside the strips, at
+-- the outer gap, and narrowed if it's wider than that space. (Undocking leaves
+-- them be.)
+local function fit_one(w, m)
+  local ws = w.workspace and w.workspace.name or "special:"
+  if not (w.floating and not w.pinned and pinned[w.address] == nil and ws:sub(1, 8) ~= "special:"
+      and (w.fullscreen or 0) == 0 and w.at and w.size) then
     return
   end
   local mw = logical_size(m)
@@ -776,21 +779,47 @@ local function fit_floating(name)
   local r = m.reserved or {}
   local from = m.x + (r.left or 0) + left
   local to = m.x + mw - (r.right or 0) - right
+  local width = math.min(w.size.x, to - from)
+  local x = math.min(math.max(w.at.x, from), to - width)
+  if width < w.size.x then
+    -- (Resizing a floating window keeps its centre: moved after.)
+    dispatch_for(w, hl.dsp.window.resize, { x = math.floor(width), y = math.floor(w.size.y) })
+  end
+  if width < w.size.x or x ~= w.at.x then
+    dispatch_for(w, hl.dsp.window.move, { x = math.floor(x), y = math.floor(w.at.y) })
+  end
+end
+
+-- Every floating window on the monitor, once its strips changed.
+local function fit_floating(name)
+  local m = monitor_named(name)
+  if m == nil then
+    return
+  end
   for _, w in ipairs(hl.get_windows()) do
-    local ws = w.workspace and w.workspace.name or "special:"
-    if w.floating and not w.pinned and pinned[w.address] == nil and w.monitor and w.monitor.name == name
-        and ws:sub(1, 8) ~= "special:" and (w.fullscreen or 0) == 0 then
-      local width = math.min(w.size.x, to - from)
-      local x = math.min(math.max(w.at.x, from), to - width)
-      if width < w.size.x then
-        -- (Resizing a floating window keeps its centre: moved after.)
-        dispatch_for(w, hl.dsp.window.resize, { x = math.floor(width), y = math.floor(w.size.y) })
-      end
-      if width < w.size.x or x ~= w.at.x then
-        dispatch_for(w, hl.dsp.window.move, { x = math.floor(x), y = math.floor(w.at.y) })
-      end
+    if w.monitor and w.monitor.name == name then
+      fit_one(w, m)
     end
   end
+end
+
+-- One window, as it opens, floats or takes focus (after a window dragged under
+-- a dock): only on a monitor with a docked window, a moment later, once
+-- Hyprland has placed it.
+local function fit_soon(address)
+  hl.timer(guard("keeping a floating window out from under a dock", function()
+    local w = address and current(address)
+    local m = w and w.monitor
+    if m == nil or not usable_monitor(m) then
+      return
+    end
+    for _, p in pairs(pinned) do
+      if p.monitor == m.name then
+        fit_one(w, m)
+        return
+      end
+    end
+  end), { timeout = 40, type = "oneshot" })
 end
 
 local function reserved_sides(m)
@@ -2438,8 +2467,11 @@ hl.on("monitor.removed", guard("following a monitor change", function() monitors
 hl.on("layer.opened", guard("following the reserved space", function() monitors_changed_soon(true) end))
 hl.on("layer.closed", guard("following the reserved space", function() monitors_changed_soon(true) end))
 
-hl.on("window.active", guard("focus change", function()
+hl.on("window.active", guard("focus change", function(window)
   sync_keys_soon()
+  if window and window.floating then
+    fit_soon(window.address)
+  end
   -- After the focus change has raised whatever it raises.
   hl.timer(guard("lowering pinned windows", lower_all), { timeout = 1, type = "oneshot" })
 end))
@@ -2482,6 +2514,13 @@ hl.on("window.open", guard("opening a window", function(window)
     park()
   elseif window and config.remember then
     restore(window)
+  end
+end))
+
+-- A window that opens floating or floats (both bring its rules up to date).
+hl.on("window.update_rules", guard("a floating window", function(window)
+  if window and window.floating then
+    fit_soon(window.address)
   end
 end))
 
