@@ -803,9 +803,8 @@ local function fit_floating(name)
   end
 end
 
--- One window, as it opens, floats or takes focus (after a window dragged under
--- a dock): only on a monitor with a docked window, a moment later, once
--- Hyprland has placed it.
+-- One window, as it opens or floats: only on a monitor with a docked window,
+-- a moment later, once Hyprland has placed it.
 local function fit_soon(address)
   hl.timer(guard("keeping a floating window out from under a dock", function()
     local w = address and current(address)
@@ -817,6 +816,24 @@ local function fit_soon(address)
       if p.monitor == m.name then
         fit_one(w, m)
         return
+      end
+    end
+  end), { timeout = 40, type = "oneshot" })
+end
+
+-- Every floating window on the monitors with a docked window, when focus moves
+-- (one dragged under a dock still has focus as it's let go, so it's fitted
+-- once focus goes elsewhere).
+local function fit_all_soon()
+  hl.timer(guard("keeping floating windows out from under docks", function()
+    local docked = {}
+    for _, p in pairs(pinned) do
+      docked[p.monitor] = true
+    end
+    for name in pairs(docked) do
+      local m = monitor_named(name)
+      if m and usable_monitor(m) then
+        fit_floating(name)
       end
     end
   end), { timeout = 40, type = "oneshot" })
@@ -2469,9 +2486,7 @@ hl.on("layer.closed", guard("following the reserved space", function() monitors_
 
 hl.on("window.active", guard("focus change", function(window)
   sync_keys_soon()
-  if window and window.floating then
-    fit_soon(window.address)
-  end
+  fit_all_soon()
   -- After the focus change has raised whatever it raises.
   hl.timer(guard("lowering pinned windows", lower_all), { timeout = 1, type = "oneshot" })
 end))
