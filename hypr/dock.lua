@@ -542,7 +542,12 @@ local function unstyle(window)
   dispatch_for(window, hl.dsp.window.set_prop, { prop = "no_shadow", value = "unset" })
   -- The theme's colours, also after border = "none" (a window pinned with a
   -- coloured border keeps that colour, unseen, until now).
-  set_border(window, theme_border("general:col.active_border"), theme_border("general:col.inactive_border"))
+  -- (With the Window Style plugin, its colours for the window's kind.)
+  if type(window_style) == "table" and window_style.adopt then
+    window_style.adopt(window)
+  else
+    set_border(window, theme_border("general:col.active_border"), theme_border("general:col.inactive_border"))
+  end
   local f = io.open(restored_file, "a")
   if f then
     f:write(window.address, "\n")
@@ -2191,7 +2196,10 @@ do
       local in_sidebar = w and w.workspace and w.workspace.name:match("^special:sidebar%d*$")
       if w and not pinned[address] and not in_sidebar and not keep[address] then
         keep[address] = true
-        set_border(w, theme_border("general:col.active_border"), theme_border("general:col.inactive_border"))
+        -- (The Window Style plugin reads this list itself.)
+        if type(window_style) ~= "table" or not window_style.adopt then
+          set_border(w, theme_border("general:col.active_border"), theme_border("general:col.inactive_border"))
+        end
       end
     end
     f:close()
