@@ -1566,9 +1566,16 @@ end
 
 -- The workspace's outer gap: the config's, plus the free share on the side
 -- away from where its windows gather.
+local function gaps_key()
+  return table.concat({ gaps() }, " ")
+end
+
 local function apply_gather(ws)
   local top, right, bottom, left = gaps()
   local g = gathered[ws]
+  if g then
+    g.gaps = gaps_key()
+  end
   local free = g and gather_free(ws, g.side) or 0
   -- Hyprland lays out only visible workspaces again: a hidden one's free half
   -- isn't in place until it's shown (see workspace.active).
@@ -1627,10 +1634,13 @@ local function tiled_gather(direction)
   return true
 end
 
--- Those whose free half changed (a monitor's size, scale or docked strips).
+-- Those whose free half changed (a monitor's size, scale or docked strips), or
+-- whose outer gap did: a rule keeps the gap it was given, so one written while
+-- Omarchy's flush bar had the top edge at 0 would keep it there.
 apply_gathers = function()
+  local now = gaps_key()
   for ws, g in pairs(gathered) do
-    if g.applied ~= gather_free(ws, g.side) then
+    if g.applied ~= gather_free(ws, g.side) or g.gaps ~= now then
       apply_gather(ws)
     end
   end
@@ -2491,6 +2501,31 @@ hl.on("monitor.added", guard("following a monitor change", function() monitors_c
 hl.on("monitor.removed", guard("following a monitor change", function() monitors_changed_soon(false) end))
 hl.on("layer.opened", guard("following the reserved space", function() monitors_changed_soon(true) end))
 hl.on("layer.closed", guard("following the reserved space", function() monitors_changed_soon(true) end))
+-- A setting changed at runtime (Omarchy's flush bar sets gaps_out this way).
+-- Only workspaces whose outer gap changed are applied again: apply_gather sets
+-- preserve_split and a workspace rule, which fire this event again at once, and
+-- a hidden gathered workspace always looks changed to apply_gathers (its
+-- `applied` is nil), so calling apply_gathers here looped forever and hung
+-- Hyprland. `refreshing` stops any such re-entry too.
+local refreshing = false
+hl.on("config.props_refreshed", guard("following the outer gap", function()
+  if refreshing then
+    return
+  end
+  refreshing = true
+  local ok, err = pcall(function()
+    local now = gaps_key()
+    for ws, g in pairs(gathered) do
+      if g.gaps ~= now then
+        apply_gather(ws)
+      end
+    end
+  end)
+  refreshing = false
+  if not ok then
+    error(err, 0)
+  end
+end))
 
 hl.on("window.active", guard("focus change", function(window)
   sync_keys_soon()
